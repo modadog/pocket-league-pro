@@ -71,6 +71,11 @@ let playWithAI = true;
 let scores = { blue: 0, orange: 0 };
 let debugMode = false; 
 
+// --- NEW VOLUME VARIABLES ---
+let musicVolume = 30; // 0-100, initialized to 30
+let sfxVolume = 60;  // 0-100, initialized to 60
+// ----------------------------
+
 // Ball Radius Scaled
 const ball = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, vel: { x: 0, y: 0 }, radius: 22.5, color: '#eef' }; // (15 * 1.5)
 
@@ -80,18 +85,18 @@ let replayPlayerCar = {};
 let replayAiCar = {};
 
 // --- AUDIO SETUP ---
-// NOTE: Paths updated to use your 'pocket league' folder and file names!
+// NOTE: Path for music.mp3 renamed to new_music.mp3!
 const AUDIO = {
     // Single sound for any goal scored
     goal: new Audio('pocket league/goal_sound.mp3'),
-    // Background music
+    // Background music (Updated file name)
     backgroundMusic: new Audio('pocket league/new_music.mp3')
 };
 
-// Configure the music to loop and set volumes
-AUDIO.goal.volume = 0.6;
-AUDIO.backgroundMusic.loop = true; // Crucial for continuous play
-AUDIO.backgroundMusic.volume = 0.3; // Lower volume so it doesn't overpower the game
+// Configure the music to loop and set volumes based on variables
+AUDIO.goal.volume = sfxVolume / 100;
+AUDIO.backgroundMusic.loop = true; 
+AUDIO.backgroundMusic.volume = musicVolume / 100;
 
 // Tracks if music has been played to meet browser auto-play requirements
 let musicHasStarted = false; 
@@ -109,6 +114,8 @@ function startBackgroundMusic() {
 }
 
 function playGoalSound() {
+    // Apply current SFX volume before playing
+    AUDIO.goal.volume = sfxVolume / 100;
     // Ensure playback starts from the beginning of the goal sound
     AUDIO.goal.currentTime = 0;
     AUDIO.goal.play().catch(e => console.error("Error playing goal sound:", e));
@@ -299,6 +306,10 @@ function drawMenu() {
         titleText = 'Select Game Mode';
         buttonTexts = ['Normal', 'Ice (No Friction)', 'Heatseeker'];
         buttonLabels = ['normal', 'ice', 'heatseeker'];
+    } else if (gameState === 'menu_settings') {
+        // If in settings, draw the settings menu instead
+        drawSettingsMenu();
+        return;
     }
     
     ctx.font = '45px sans-serif'; 
@@ -321,6 +332,7 @@ function drawMenu() {
         ctx.fillText(buttonTexts[index], CANVAS_WIDTH / 2, y + 50); 
     });
     
+    // --- DEBUG BUTTON ---
     const DEBUG_BUTTON_WIDTH = 135; 
     const DEBUG_BUTTON_HEIGHT = 45; 
     const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15; 
@@ -334,17 +346,251 @@ function drawMenu() {
     ctx.font = '20px sans-serif'; 
     ctx.textAlign = 'center';
     ctx.fillText(debugText, debugX + DEBUG_BUTTON_WIDTH / 2, debugY + 30); 
+
+    // --- NEW SETTINGS BUTTON ---
+    const settingsY = debugY + DEBUG_BUTTON_HEIGHT + 15; // Right under debug button
+    const settingsText = 'SETTINGS';
+    
+    ctx.fillStyle = '#4facfe'; // Blue color for consistency
+    ctx.fillRect(debugX, settingsY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText(settingsText, debugX + DEBUG_BUTTON_WIDTH / 2, settingsY + 30);
+    // ---------------------------
 }
+
+function drawSettingsMenu() {
+    ctx.fillStyle = '#181820';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#eee';
+    ctx.font = '90px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText('Settings', CANVAS_WIDTH / 2, 150); 
+
+    const centerX = CANVAS_WIDTH / 2;
+    const sliderWidth = 400;
+    const sliderHeight = 15;
+    const knobRadius = 15;
+    const startY = 300;
+    const separation = 150; 
+    
+    // --- Music Volume Slider ---
+    const musicY = startY;
+    
+    // Label
+    ctx.fillStyle = '#eee';
+    ctx.font = '36px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Music Volume: ${musicVolume}%`, centerX - sliderWidth / 2, musicY - 30);
+    
+    // Slider Track
+    ctx.fillStyle = '#333';
+    ctx.fillRect(centerX - sliderWidth / 2, musicY, sliderWidth, sliderHeight);
+
+    // Slider Progress
+    ctx.fillStyle = '#4facfe';
+    const musicProgressWidth = sliderWidth * (musicVolume / 100);
+    ctx.fillRect(centerX - sliderWidth / 2, musicY, musicProgressWidth, sliderHeight);
+
+    // Slider Knob
+    ctx.fillStyle = '#eee';
+    ctx.beginPath();
+    ctx.arc(centerX - sliderWidth / 2 + musicProgressWidth, musicY + sliderHeight / 2, knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // --- SFX Volume Slider ---
+    const sfxY = startY + separation;
+    
+    // Label
+    ctx.fillStyle = '#eee';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SFX Volume: ${sfxVolume}%`, centerX - sliderWidth / 2, sfxY - 30);
+    
+    // Slider Track
+    ctx.fillStyle = '#333';
+    ctx.fillRect(centerX - sliderWidth / 2, sfxY, sliderWidth, sliderHeight);
+
+    // Slider Progress
+    ctx.fillStyle = '#ff9a44';
+    const sfxProgressWidth = sliderWidth * (sfxVolume / 100);
+    ctx.fillRect(centerX - sliderWidth / 2, sfxY, sfxProgressWidth, sliderHeight);
+
+    // Slider Knob
+    ctx.fillStyle = '#eee';
+    ctx.beginPath();
+    ctx.arc(centerX - sliderWidth / 2 + sfxProgressWidth, sfxY + sliderHeight / 2, knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // --- BACK BUTTON ---
+    const buttonWidth = 270; 
+    const buttonHeight = 75; 
+    const backX = centerX - buttonWidth / 2;
+    const backY = sfxY + separation;
+    
+    ctx.fillStyle = '#888'; 
+    ctx.fillRect(backX, backY, buttonWidth, buttonHeight);
+
+    ctx.fillStyle = '#fff'; 
+    ctx.font = '36px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText('BACK', centerX, backY + 50);
+}
+
+function handleSettingsInteraction(e, rect) {
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const centerX = CANVAS_WIDTH / 2;
+    const sliderWidth = 400;
+    const sliderHeight = 15;
+    const knobRadius = 15;
+    const startY = 300;
+    const separation = 150; 
+    
+    const sliderMinX = centerX - sliderWidth / 2;
+    const sliderMaxX = centerX + sliderWidth / 2;
+    
+    // Music Slider Area
+    const musicY = startY;
+    if (mouseY >= musicY - knobRadius && mouseY <= musicY + sliderHeight + knobRadius && 
+        mouseX >= sliderMinX - knobRadius && mouseX <= sliderMaxX + knobRadius) {
+        
+        let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
+        musicVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
+        
+        // Apply volume change immediately
+        AUDIO.backgroundMusic.volume = musicVolume / 100;
+        return true; 
+    }
+
+    // SFX Slider Area
+    const sfxY = startY + separation;
+    if (mouseY >= sfxY - knobRadius && mouseY <= sfxY + sliderHeight + knobRadius && 
+        mouseX >= sliderMinX - knobRadius && mouseX <= sliderMaxX + knobRadius) {
+        
+        let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
+        sfxVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
+        
+        // SFX volume is applied in playGoalSound, but update for potential immediate sound
+        AUDIO.goal.volume = sfxVolume / 100;
+        
+        // Play a quick test sound when changing SFX volume
+        if (e.type === 'mouseup' || e.type === 'click') {
+             // Create a temporary sound just for testing slider change
+             const testSound = new Audio('pocket league/goal_sound.mp3'); 
+             testSound.volume = sfxVolume / 100;
+             testSound.play().catch(e => console.error("Error playing test sound:", e));
+        }
+        return true; 
+    }
+    
+    // Back Button Area
+    const buttonWidth = 270; 
+    const buttonHeight = 75; 
+    const backX = centerX - buttonWidth / 2;
+    const backY = sfxY + separation;
+
+    if (mouseX >= backX && mouseX <= backX + buttonWidth && mouseY >= backY && mouseY <= backY + buttonHeight) {
+        gameState = 'menu_difficulty'; // Return to the difficulty selection menu
+        return true;
+    }
+    
+    return false;
+}
+
+// Global variable to track if a slider is being dragged
+let isDraggingSlider = false;
+
+function handleMenuMousedown(e) {
+    if (gameState !== 'menu_settings') return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const centerX = CANVAS_WIDTH / 2;
+    const sliderWidth = 400;
+    const knobRadius = 15;
+    const sliderHeight = 15;
+    const startY = 300;
+    const separation = 150; 
+    const sliderMinX = centerX - sliderWidth / 2;
+    const sliderMaxX = centerX + sliderWidth / 2;
+    
+    // Check Music Slider Knob
+    const musicY = startY;
+    const musicKnobX = sliderMinX + sliderWidth * (musicVolume / 100);
+    if (mouseX >= musicKnobX - knobRadius && mouseX <= musicKnobX + knobRadius &&
+        mouseY >= musicY && mouseY <= musicY + sliderHeight) {
+        isDraggingSlider = 'music';
+        return;
+    }
+
+    // Check SFX Slider Knob
+    const sfxY = startY + separation;
+    const sfxKnobX = sliderMinX + sliderWidth * (sfxVolume / 100);
+    if (mouseX >= sfxKnobX - knobRadius && mouseX <= sfxKnobX + knobRadius &&
+        mouseY >= sfxY && mouseY <= sfxY + sliderHeight) {
+        isDraggingSlider = 'sfx';
+        return;
+    }
+}
+
+function handleMenuMousemove(e) {
+    if (gameState !== 'menu_settings' || !isDraggingSlider) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+
+    const centerX = CANVAS_WIDTH / 2;
+    const sliderWidth = 400;
+    const sliderMinX = centerX - sliderWidth / 2;
+    const sliderMaxX = centerX + sliderWidth / 2;
+
+    let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
+    let newVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
+    
+    if (isDraggingSlider === 'music') {
+        musicVolume = newVolume;
+        AUDIO.backgroundMusic.volume = musicVolume / 100;
+    } else if (isDraggingSlider === 'sfx') {
+        sfxVolume = newVolume;
+        AUDIO.goal.volume = sfxVolume / 100; // Update volume immediately
+    }
+}
+
+function handleMenuMouseup(e) {
+    if (isDraggingSlider === 'sfx') {
+        // Play SFX test sound when user releases the SFX slider
+        const testSound = new Audio('pocket league/goal_sound.mp3'); 
+        testSound.volume = sfxVolume / 100;
+        testSound.play().catch(err => console.error("Error playing test sound on release:", err));
+    }
+    isDraggingSlider = false;
+}
+
+canvas.addEventListener('mousedown', handleMenuMousedown);
+canvas.addEventListener('mousemove', handleMenuMousemove);
+canvas.addEventListener('mouseup', handleMenuMouseup);
 
 function handleMenuClick(e) {
     // Attempt to start music on any click if it hasn't started yet (for mobile/browser restrictions)
     startBackgroundMusic(); 
 
-    if (gameState !== 'menu_difficulty' && gameState !== 'menu_mode') return;
-
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
+
+    if (gameState === 'menu_settings') {
+        // Handle Back button click only (slider logic is in mousedown/move)
+        handleSettingsInteraction(e, rect); 
+        return;
+    }
+
+    if (gameState !== 'menu_difficulty' && gameState !== 'menu_mode') return;
 
     const buttonWidth = 270;
     const buttonHeight = 75;
@@ -372,6 +618,7 @@ function handleMenuClick(e) {
         }
     });
     
+    // Check DEBUG button click
     const DEBUG_BUTTON_WIDTH = 135; 
     const DEBUG_BUTTON_HEIGHT = 45; 
     const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15;
@@ -380,6 +627,15 @@ function handleMenuClick(e) {
     if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= debugY && mouseY <= debugY + DEBUG_BUTTON_HEIGHT) {
         debugMode = !debugMode; 
         drawMenu(); 
+        return;
+    }
+    
+    // Check SETTINGS button click
+    const settingsY = debugY + DEBUG_BUTTON_HEIGHT + 15;
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= settingsY && mouseY <= settingsY + DEBUG_BUTTON_HEIGHT) {
+        gameState = 'menu_settings';
+        drawMenu(); 
+        return;
     }
 }
 
@@ -1147,7 +1403,7 @@ function drawGame() {
 }
 
 function loop() {
-    if (gameState === 'menu_difficulty' || gameState === 'menu_mode') {
+    if (gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'menu_settings') {
         drawMenu();
     } else if (gameState === 'playing') {
         update();
