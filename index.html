@@ -1,40 +1,122 @@
-<!DOCTYPE html><html><head><title>Pocket League Pro - Final Debug Setup</title></head><body style="margin:0; background:#181820; display:flex; justify-content:center; align-items:center; height:100vh;"><canvas id="gameCanvas" width="1200" height="750" style="border:4px solid #333; display:block;"></canvas><script>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pocket League Pro - Final Debug Setup</title>
+    <style>
+        body {
+            margin: 0; 
+            background: #181820; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh;
+        }
+        /* Style for ALL settings containers */
+        #moddedSettingsContainer, #volumeSettingsContainer { 
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #333;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            display: none; /* Controlled by JavaScript */
+            width: 350px;
+            z-index: 100;
+        }
+        .setting-item {
+            margin-bottom: 20px;
+            color: #fff;
+            font-family: sans-serif;
+        }
+        .setting-item label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 16px;
+        }
+        .setting-item input[type=range] {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="1200" height="750" style="border:4px solid #333; display:block;"></canvas>
+
+    <div id="moddedSettingsContainer">
+        <h3 style="color:#fff; text-align:center;">Modded Settings (0 - 100 Scale)</h3>
+        <div id="physicsSliderList">
+            </div>
+        <button id="savePhysicsSettings" style="width:100%; padding:10px; background:#4facfe; border:none; color:#fff; font-size:18px; cursor:pointer;">Back to Menu</button>
+    </div>
+
+    <div id="volumeSettingsContainer">
+        <h3 style="color:#fff; text-align:center;">Volume Settings</h3>
+        <div id="volumeSliderList">
+            </div>
+        <button id="saveVolumeSettings" style="width:100%; padding:10px; background:#4facfe; border:none; color:#fff; font-size:18px; cursor:pointer;">Back to Menu</button>
+    </div>
+
+    <script>
 // SCALING FACTOR APPLIED: 1.5
-const CANVAS_WIDTH = 1200; // Scaled (800 * 1.5)
-const CANVAS_HEIGHT = 750; // Scaled (500 * 1.5)
-const CORNER_RADIUS = 15; // Corner radius reduced (10 * 1.5)
-const FRICTION = 0.96;
-const CAR_ACCEL = 0.45;
-
+const CANVAS_WIDTH = 1200; 
+const CANVAS_HEIGHT = 750; 
+const CORNER_RADIUS = 15; 
 const BASE_MAX_SPEED = 2.5; 
-// The maximum speed when boosting, now equal for all cars.
-const BASE_BOOST_MAX_SPEED = 12; 
-
 const CAR_TURN_SPEED = 0.08;
-const WALL_BOUNCE = 0.85; 
 const CAR_WALL_RESPONSE = 0.5; 
-const CAR_BOUNCE = 0.8; 
-const GOAL_WIDTH = 300; // Scaled (200 * 1.5)
-const GOAL_START_Y = (CANVAS_HEIGHT - GOAL_WIDTH) / 2;
-const BOOST_DRAIN_RATE = 1; 
+// BOOST_DRAIN_RATE is now in gameSettings
 const BOOST_RECHARGE_RATE = 0.2; 
 
+const GOAL_WIDTH = 300; 
+const GOAL_START_Y = (CANVAS_HEIGHT - GOAL_WIDTH) / 2;
 const GOAL_Y = CANVAS_HEIGHT / 2;
-// AI still uses this threshold to decide *when* to boost, 
-// but the boost speed is now the same as the player's.
-const AI_BOOST_THRESHOLD = 300; // Scaled value
-const SAFE_SPAWN_PADDING = 120; // Scaled value (80 * 1.5) for car spawns
+const AI_BOOST_THRESHOLD = 300; 
+const SAFE_SPAWN_PADDING = 120; 
+
+// --- VOLUME SETTINGS (UPDATED TO USER REQUESTS) ---
+let musicVolume = 0.5; // DEFAULT: 50%
+let sfxVolume = 1.0; // DEFAULT: 100%
+
+// --- SLIDER-CONTROLLABLE GAME SETTINGS (PHYSICS) ---
+let gameSettings = {
+    FRICTION: 0.96,
+    CAR_ACCEL: 0.45,
+    WALL_BOUNCE: 0.85,
+    CAR_BOUNCE: 0.8,
+    BOOST_MAX_SPEED: 12,
+    AI_AGGRESSION: 1.0,
+    BOOST_DRAIN_RATE: 1.0, // NEW: 1.0 = Default Drain, 0.0 = Infinite Boost
+};
+
+// Map of physics slider definitions (0-100 scale maps to these game value ranges)
+const physicsSliderDefs = [
+    { key: 'FRICTION', label: 'Car Drag', minGame: 0.9, maxGame: 1.0, defaultGame: 0.96, step: 0.001 },
+    { key: 'CAR_ACCEL', label: 'Acceleration', minGame: 0.1, maxGame: 2.0, defaultGame: 0.45, step: 0.05 },
+    { key: 'WALL_BOUNCE', label: 'Ball Bounce', minGame: 0.2, maxGame: 1.0, defaultGame: 0.85, step: 0.05 },
+    { key: 'CAR_BOUNCE', label: 'Car Collision', minGame: 0.2, maxGame: 1.0, defaultGame: 0.8, step: 0.05 },
+    { key: 'BOOST_MAX_SPEED', label: 'Max Boost Speed', minGame: 5, maxGame: 25, defaultGame: 12, step: 1 },
+    { key: 'AI_AGGRESSION', label: 'AI Aggression', minGame: 0.0, maxGame: 3.0, defaultGame: 1.0, step: 0.1 },
+    // NEW: Boost Drain Setting
+    { key: 'BOOST_DRAIN_RATE', label: 'Boost Drain (0=Inf, 1=Default)', minGame: 0.0, maxGame: 1.0, defaultGame: 1.0, step: 0.01 }
+];
+// ----------------------------------------------------
+
 
 // --- GAME MODE CONSTANTS & VARIABLES ---
 let gameState = 'menu_difficulty'; 
 let gameMode = 'normal'; 
-let heatseekerTargetCar = 'orange'; // Goal the ball is currently seeking: 'blue' or 'orange'
-let ballHasBeenHit = false; // Controls if the seeking force is active
-let lastGoalScoredBy = 'none'; // 'blue', 'orange', or 'none'. Used for heatseeker spawn.
+let heatseekerTargetCar = 'orange'; 
+let ballHasBeenHit = false; 
+let lastGoalScoredBy = 'none'; 
 
 const NORMAL_BALL_FRICTION = 0.98;
 const ICE_BALL_FRICTION = 1.0; 
 let currentBallFriction = NORMAL_BALL_FRICTION;
+
+// Variable for car friction, defaults to moddable setting
+let currentCarFriction = gameSettings.FRICTION; 
 
 // --- HEATSEEKER CONSTANTS ---
 const HEATSEEKER_BASE_ACCEL = 0.07; 
@@ -53,96 +135,88 @@ let postGoalScores = { blue: 0, orange: 0 };
 // ----------------------------------------
 
 // --- GAME TIMER VARIABLES ---
-const GAME_DURATION_SECONDS = 300; // 5 minutes
+const GAME_DURATION_SECONDS = 300; 
 let timeRemaining = GAME_DURATION_SECONDS;
 let gameTimerInterval = null; 
 // ----------------------------------
 
 // --- CAR RECTANGULAR HITBOX DIMENSIONS ---
-const CAR_WIDTH = 60; // Scaled (40 * 1.5)
-const CAR_HEIGHT = 45; // Scaled (30 * 1.5)
+const CAR_WIDTH = 60; 
+const CAR_HEIGHT = 45; 
 const CAR_HALF_WIDTH = CAR_WIDTH / 2; 
 const CAR_HALF_HEIGHT = CAR_HEIGHT / 2; 
 const CAR_MAX_DISTANCE = Math.sqrt(CAR_HALF_WIDTH**2 + CAR_HALF_HEIGHT**2); 
 
 // --- GAME OBJECTS ---
-let AI_AGGRESSION_FACTOR = 1; 
+let AI_AGGRESSION_FACTOR = gameSettings.AI_AGGRESSION; 
 let playWithAI = true; 
 let scores = { blue: 0, orange: 0 };
 let debugMode = false; 
-
-// --- NEW VOLUME VARIABLES ---
-let musicVolume = 30; // 0-100, initialized to 30
-let sfxVolume = 60;  // 0-100, initialized to 60
-// ----------------------------
+let isTwoPlayerMode = false;
+let selectedDifficulty = 'medium'; 
 
 // Ball Radius Scaled
-const ball = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, vel: { x: 0, y: 0 }, radius: 22.5, color: '#eef' }; // (15 * 1.5)
+const ball = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, vel: { x: 0, y: 0 }, radius: 22.5, color: '#eef' }; 
 
-// Temporary objects to hold state during replay
+// Car definitions - Initialized with default values
+const playerCar = { id: 'blue', x: 150, y: 375, angle: 0, vel: { x: 0, y: 0 }, color: '#4facfe', boost: 100 }; 
+const aiCar = { id: 'orange', x: CANVAS_WIDTH - 150, y: 375, angle: Math.PI, vel: { x: 0, y: 0 }, color: '#ff9a44', boost: 100 }; 
+let cars = [playerCar]; 
+
+// Temporary objects for replay
 let replayBall = {};
 let replayPlayerCar = {};
-let replayAiCar = {};
+// FIX: Initialize replayAiCar as an empty object. It will be set to null/object in replayLoop.
+let replayAiCar = {}; 
 
 // --- AUDIO SETUP ---
-// NOTE: Path for music.mp3 renamed to new_music.mp3!
 const AUDIO = {
-    // Single sound for any goal scored
     goal: new Audio('pocket league/goal_sound.mp3'),
-    // Background music (Updated file name to new_music.mp3)
-    backgroundMusic: new Audio('pocket league/new_music.mp3') 
+    backgroundMusic: new Audio('pocket league/music.mp3')
 };
-
-// Configure the music to loop and set volumes based on variables
-AUDIO.goal.volume = sfxVolume / 100;
+// Set initial volume from global variables
+AUDIO.goal.volume = sfxVolume;
 AUDIO.backgroundMusic.loop = true; 
-AUDIO.backgroundMusic.volume = musicVolume / 100;
-
-// Tracks if music has been played to meet browser auto-play requirements
+AUDIO.backgroundMusic.volume = musicVolume; 
 let musicHasStarted = false; 
 
 function startBackgroundMusic() {
     if (!musicHasStarted) {
-        // Attempt to play music. Browsers often require a user interaction first.
         AUDIO.backgroundMusic.play().then(() => {
             musicHasStarted = true;
         }).catch(e => {
-            console.warn("Autoplay was prevented. Music will start after the first click.", e);
-            // If autoplay fails, we rely on the first user click/touch to start it.
+            console.warn("Autoplay was prevented. Music will start after the first click:", e);
         });
     }
 }
 
 function playGoalSound() {
-    // Apply current SFX volume before playing
-    AUDIO.goal.volume = sfxVolume / 100; // Use current SFX volume
-    // Ensure playback starts from the beginning of the goal sound
     AUDIO.goal.currentTime = 0;
     AUDIO.goal.play().catch(e => console.error("Error playing goal sound:", e));
 }
 // --- END AUDIO SETUP ---
 
-
+/**
+ * Initializes the keys object, using correct casing for Arrow keys.
+ */
 function initializeKeys() {
-    // Added 'f' for replay skip
-    return { w: false, s: false, a: false, d: false, " ": false, ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false, m: false, f: false };
+    return { 
+        w: false, s: false, a: false, d: false, 
+        " ": false, m: false, f: false, 
+        ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false 
+    };
 }
 let keys = initializeKeys();
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+// NEW: References to the two settings containers
+const moddedSettingsContainer = document.getElementById('moddedSettingsContainer');
+const volumeSettingsContainer = document.getElementById('volumeSettingsContainer');
 
-const playerCar = { id: 'blue', x: 150, y: 375, angle: 0, vel: { x: 0, y: 0 }, color: '#4facfe', boost: 100 }; // Scaled initial positions
-const aiCar = { id: 'orange', x: CANVAS_WIDTH - 150, y: 375, angle: Math.PI, vel: { x: 0, y: 0 }, color: '#ff9a44', boost: 100 }; // Scaled initial positions
-let cars = [playerCar]; 
 
 function distance(c1, c2) { return Math.sqrt((c1.x - c2.x)**2 + (c1.y - c2.y)**2); }
 
-/**
- * Converts time in seconds to M:SS format.
- * @param {number} totalSeconds - The total number of seconds remaining.
- * @returns {string} The formatted time string.
- */
 function formatTime(totalSeconds) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = Math.floor(totalSeconds % 60);
@@ -162,10 +236,8 @@ function startTimer() {
                 gameState = 'game_over';
             }
         }
-        // Timer pauses automatically if gameState is 'replay' or menus
     }, 1000);
 }
-
 
 function randomizePositions() {
     const halfWidth = CANVAS_WIDTH / 2;
@@ -173,7 +245,6 @@ function randomizePositions() {
     const P = SAFE_SPAWN_PADDING; 
     let ballX, ballY;
 
-    // Standard Car Spawn Points
     const spawnPoints = [
         { blueX: halfWidth / 2 - 45, blueY: midY, orangeX: CANVAS_WIDTH - (halfWidth / 2) + 45, orangeY: midY }, 
         { blueX: P, blueY: P, orangeX: CANVAS_WIDTH - P, orangeY: CANVAS_HEIGHT - P }, 
@@ -187,47 +258,45 @@ function randomizePositions() {
     playerCar.x = selectedPair.blueX; 
     playerCar.y = selectedPair.blueY; 
     playerCar.angle = Math.atan2(midY - playerCar.y, halfWidth - playerCar.x);
-    playerCar.vel.x = 0; playerCar.vel.y = 0; playerCar.boost = 100;
+    playerCar.vel.x = 0; playerCar.vel.y = 0; 
+    playerCar.boost = isTwoPlayerMode ? 0 : 100;
     
-    if (playWithAI) {
-        aiCar.x = selectedPair.orangeX; 
-        aiCar.y = selectedPair.orangeY; 
-        aiCar.angle = Math.atan2(midY - aiCar.y, halfWidth - aiCar.x);
-        aiCar.vel.x = 0; aiCar.vel.y = 0; aiCar.boost = 100;
-    }
-
-    // --- Heatseeker Kickoff Logic (Forward Corner Spawn, Never Center) ---
+    // Ensure aiCar is updated even if AI is off, just in case the array or properties are needed
+    aiCar.x = selectedPair.orangeX; 
+    aiCar.y = selectedPair.orangeY; 
+    aiCar.angle = Math.atan2(midY - aiCar.y, halfWidth - aiCar.x);
+    aiCar.vel.x = 0; 
+    aiCar.vel.y = 0; 
+    aiCar.boost = isTwoPlayerMode ? 0 : 100;
+    
     if (gameMode === 'heatseeker') {
         let spawnType = lastGoalScoredBy;
-        
-        // Handle initial kickoff by choosing a random side
         if (spawnType === 'none') {
             spawnType = Math.random() < 0.5 ? 'blue' : 'orange';
         }
         
+        // FIX: Ensure the ball targets the opposite goal of the scoring team.
         if (spawnType === 'blue') { 
-            // Blue scored (Orange lost) -> Ball spawns on Orange half (far side, top wall)
+            // Blue scored -> Ball targets Orange goal
             ballX = CANVAS_WIDTH - HS_SPAWN_X_FORWARD; 
             ballY = HS_SPAWN_Y_INWARD; 
-            heatseekerTargetCar = 'blue'; 
+            heatseekerTargetCar = 'orange'; // Target Orange goal
         } else if (spawnType === 'orange') { 
-            // Orange scored (Blue lost) -> Ball spawns on Blue half (near side, bottom wall)
+            // Orange scored -> Ball targets Blue goal (e.g., from an AI own-goal)
             ballX = HS_SPAWN_X_FORWARD; 
             ballY = CANVAS_HEIGHT - HS_SPAWN_Y_INWARD; 
-            heatseekerTargetCar = 'orange'; 
+            heatseekerTargetCar = 'blue'; // Target Blue goal
         }
     } else {
-        // Normal Mode: Center Spawn
         ballX = halfWidth; 
         ballY = midY;
     }
 
-    // Spawn ball
     ball.x = ballX; 
     ball.y = ballY;
     ball.vel.x = 0; 
     ball.vel.y = 0;
-    ballHasBeenHit = false; // Reset hit state
+    ballHasBeenHit = false; 
 }
 
 function resetGame() {
@@ -238,56 +307,281 @@ function resetGame() {
     lastGoalScoredBy = 'none'; 
     gameHistory = [];
     currentReplayData = []; 
-    randomizePositions(); 
 }
 
+/**
+ * Event listener for keydown. 
+ */
 window.addEventListener('keydown', e => { 
-    if(keys.hasOwnProperty(e.key.toLowerCase()) || e.key === " " || e.key.startsWith('Arrow')) keys[e.key.toLowerCase()]=true; 
+    const key = e.key;
+    const keyName = key.startsWith('Arrow') || key === " " ? key : key.toLowerCase();
     
-    if(e.key.toLowerCase() === 'm' && (gameState === 'playing' || gameState === 'game_over' || gameState === 'replay')) {
-        // If 'M' is pressed, reset game and go to menu
+    if (keys.hasOwnProperty(keyName)) { 
+        keys[keyName] = true; 
+    }
+    
+    if(keyName === 'm' && (gameState === 'playing' || gameState === 'game_over' || gameState === 'replay')) {
         resetGame(); 
         gameState = 'menu_difficulty'; 
+        moddedSettingsContainer.style.display = 'none';
+        volumeSettingsContainer.style.display = 'none';
+        canvas.style.display = 'block';
     }
 });
+
+/**
+ * Event listener for keyup.
+ */
 window.addEventListener('keyup', e => { 
-    if(keys.hasOwnProperty(e.key.toLowerCase()) || e.key === " " || e.key.startsWith('Arrow')) keys[e.key.toLowerCase()]=false;
+    const key = e.key;
+    const keyName = key.startsWith('Arrow') || key === " " ? key : key.toLowerCase();
+    
+    if (keys.hasOwnProperty(keyName)) { 
+        keys[keyName] = false;
+    }
 });
 
-function startGame(difficulty) {
-    cars.length = 0;
-    cars.push(playerCar); 
-
-    if (difficulty === 'freeplay') {
-        AI_AGGRESSION_FACTOR = 0;
-        playWithAI = false;
-    } else {
-        playWithAI = true;
-        cars.push(aiCar); 
-        if (difficulty === 'easy') AI_AGGRESSION_FACTOR = 0.5;
-        else if (difficulty === 'medium') AI_AGGRESSION_FACTOR = 1.0;
-        else if (difficulty === 'hard') AI_AGGRESSION_FACTOR = 1.5;
-    }
+function setDifficulty(difficulty) {
+    selectedDifficulty = difficulty;
     
-    gameState = 'menu_mode'; 
-    startBackgroundMusic(); // Start the music as soon as we leave the initial menu
+    let aggression;
+    if (difficulty === 'freeplay') aggression = 0;
+    else if (difficulty === 'easy') aggression = 0.5;
+    else if (difficulty === 'medium') aggression = 1.0;
+    else if (difficulty === 'hard') aggression = 1.5;
+    
+    // Only update the gameSettings if we are not in a settings menu
+    if (gameState !== 'menu_settings_physics') {
+        // Apply a base level aggression based on difficulty preset
+        if (!isTwoPlayerMode) {
+            AI_AGGRESSION_FACTOR = aggression;
+        }
+    }
 }
 
 function selectGameMode(mode) {
     gameMode = mode;
 
+    // Ball friction logic
     if (mode === 'normal' || mode === 'heatseeker') {
         currentBallFriction = NORMAL_BALL_FRICTION;
     } else if (mode === 'ice') {
         currentBallFriction = ICE_BALL_FRICTION; 
     }
     
-    resetGame(); // Reset everything and call randomizePositions
+    // --- Car Friction Logic ---
+    currentCarFriction = gameSettings.FRICTION; // Default to the moddable setting
+    if (mode === 'ice') {
+         // FIX: Set friction close to 1.0 for a true "ice" (sliding/no friction/drag) effect.
+         currentCarFriction = 0.998; 
+    }
+    // --------------------------
+    
+    cars.length = 0;
+    cars.push(playerCar); 
+    
+    if (isTwoPlayerMode) {
+        // In 2P mode, AI_AGGRESSION_FACTOR is always 0, no AI logic runs.
+        AI_AGGRESSION_FACTOR = 0;
+        playWithAI = false;
+        cars.push(aiCar);
+        playerCar.boost = 0; 
+        aiCar.boost = 0;
+    } else {
+        setDifficulty(selectedDifficulty); 
+        if (selectedDifficulty === 'freeplay') {
+             playWithAI = false;
+        } else {
+             playWithAI = true;
+             cars.push(aiCar); 
+        }
+        playerCar.boost = 100;
+        aiCar.boost = 100;
+    }
+    
+    // Apply the current AI_AGGRESSION setting from the physics menu or difficulty preset
+    if (playWithAI && !isTwoPlayerMode) {
+        AI_AGGRESSION_FACTOR = gameSettings.AI_AGGRESSION;
+    }
+
+    resetGame(); 
+    randomizePositions(); 
     gameState = 'playing';
-    startTimer(); // Start the timer once playing begins
+    startBackgroundMusic();
+    startTimer(); 
 }
 
+// --- MODDED / PHYSICS SLIDER MANAGEMENT FUNCTIONS (RENAMED & REFACTORED) ---
+
+/**
+ * Converts a game value in a specific range to a 0-100 slider value.
+ */
+function mapValueToSlider(value, minGame, maxGame) {
+    const rangeGame = maxGame - minGame;
+    if (rangeGame === 0) return 0;
+    return ((value - minGame) / rangeGame) * 100;
+}
+
+/**
+ * Converts a 0-100 slider value to a game value in a specific range.
+ */
+function mapSliderToValue(sliderValue, minGame, maxGame) {
+    const rangeGame = maxGame - minGame;
+    return minGame + (sliderValue / 100) * rangeGame;
+}
+
+
+function createPhysicsSliders() {
+    const list = document.getElementById('physicsSliderList');
+    list.innerHTML = ''; 
+
+    physicsSliderDefs.forEach(def => {
+        // Hide AI aggression slider in 2P mode
+        if (isTwoPlayerMode && def.key === 'AI_AGGRESSION') return;
+        // Hide Boost Drain slider in 2P mode as boost is disabled anyway (pure physics testing)
+        if (isTwoPlayerMode && def.key === 'BOOST_DRAIN_RATE') return;
+
+        const div = document.createElement('div');
+        div.className = 'setting-item';
+        
+        // Calculate the initial 0-100 value from the current game setting
+        const initialSliderValue = mapValueToSlider(gameSettings[def.key], def.minGame, def.maxGame);
+
+        // 1. Label and Slider Value Display (Always 0-100)
+        const label = document.createElement('label');
+        // Display the current 0-100 mapped value
+        label.innerHTML = `<span>${def.label}</span><span id="val_${def.key}">${Math.round(initialSliderValue)}</span>`;
+        
+        // 2. Slider (always 0-100)
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.id = def.key;
+        input.min = 0;
+        input.max = 100;
+        input.step = 1;
+        input.value = initialSliderValue; // Set the slider to the 0-100 value
+        
+        input.addEventListener('input', () => {
+            const sliderVal = parseFloat(input.value);
+            // Convert slider value back to the actual game value
+            const gameVal = mapSliderToValue(sliderVal, def.minGame, def.maxGame);
+
+            // Update global settings
+            // Use toFixed(2) to prevent floating point errors from accumulating on very small steps
+            gameSettings[def.key] = def.step < 0.1 ? parseFloat(gameVal.toFixed(3)) : gameVal;
+            
+            // Update the display with the 0-100 slider value
+            document.getElementById(`val_${def.key}`).textContent = Math.round(sliderVal);
+            
+            // Special handling for AI Aggression
+            if (def.key === 'AI_AGGRESSION') {
+                AI_AGGRESSION_FACTOR = gameSettings.AI_AGGRESSION;
+            }
+        });
+
+        div.appendChild(label);
+        div.appendChild(input);
+        list.appendChild(div);
+    });
+}
+
+function showPhysicsSettings() {
+    moddedSettingsContainer.style.display = 'block'; 
+    volumeSettingsContainer.style.display = 'none'; // Ensure other settings are hidden
+    canvas.style.display = 'none';
+    
+    ctx.fillStyle = '#181820';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    createPhysicsSliders();
+    gameState = 'menu_settings_physics';
+}
+
+document.getElementById('savePhysicsSettings').addEventListener('click', () => {
+    moddedSettingsContainer.style.display = 'none';
+    canvas.style.display = 'block';
+    gameState = 'menu_difficulty'; 
+});
+// --- END MODDED / PHYSICS SLIDER MANAGEMENT FUNCTIONS ---
+
+
+// --- VOLUME SLIDER MANAGEMENT FUNCTIONS (NEW) ---
+function createVolumeSliders() {
+    const list = document.getElementById('volumeSliderList');
+    list.innerHTML = ''; 
+
+    const volumeDefs = [
+        { key: 'musicVolume', label: 'Music Volume (0 - 100)', varRef: 'musicVolume', audioRef: AUDIO.backgroundMusic },
+        { key: 'sfxVolume', label: 'SFX Volume (0 - 100)', varRef: 'sfxVolume', audioRef: AUDIO.goal }
+    ];
+
+    volumeDefs.forEach(def => {
+        const div = document.createElement('div');
+        div.className = 'setting-item';
+        
+        // Initial volume is * 100
+        const initialVolume100 = Math.round(window[def.varRef] * 100); 
+        
+        const label = document.createElement('label');
+        label.innerHTML = `<span>${def.label}</span><span id="val_${def.key}">${initialVolume100}</span>`;
+        
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.id = def.key;
+        input.min = 0;
+        input.max = 100;
+        input.step = 1;
+        input.value = initialVolume100; 
+        
+        input.addEventListener('input', () => {
+            const val = parseInt(input.value);
+            const floatVal = val / 100;
+            
+            document.getElementById(`val_${def.key}`).textContent = val;
+            
+            // Update global variable and audio object
+            window[def.varRef] = floatVal; 
+            def.audioRef.volume = floatVal;
+
+            if (def.key === 'sfxVolume') {
+                 // Play a quick test sound for SFX volume adjustment
+                 AUDIO.goal.currentTime = 0;
+                 AUDIO.goal.play().catch(e => {}); 
+            }
+        });
+
+        div.appendChild(label);
+        div.appendChild(input);
+        list.appendChild(div);
+    });
+}
+
+function showVolumeSettings() {
+    volumeSettingsContainer.style.display = 'block';
+    moddedSettingsContainer.style.display = 'none'; // Ensure other settings are hidden
+    canvas.style.display = 'none';
+
+    ctx.fillStyle = '#181820';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    createVolumeSliders();
+    gameState = 'menu_settings_volume';
+}
+
+document.getElementById('saveVolumeSettings').addEventListener('click', () => {
+    volumeSettingsContainer.style.display = 'none';
+    canvas.style.display = 'block';
+    gameState = 'menu_difficulty'; 
+});
+// --- END VOLUME SLIDER MANAGEMENT FUNCTIONS ---
+
+
 function drawMenu() {
+    // Hide settings containers when drawing menu
+    moddedSettingsContainer.style.display = 'none';
+    volumeSettingsContainer.style.display = 'none';
+    canvas.style.display = 'block';
+
     ctx.fillStyle = '#181820';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
@@ -297,290 +591,102 @@ function drawMenu() {
     ctx.fillText('Pocket League Pro', CANVAS_WIDTH / 2, 150); 
     
     let buttonTexts, buttonLabels, titleText;
+    let buttonsDrawn = true;
     
+    // 2-Player Skip Logic: If in 2P mode, we should skip difficulty and only show mode.
+    if (gameState === 'menu_difficulty' && isTwoPlayerMode) {
+        gameState = 'menu_mode'; 
+    }
+
     if (gameState === 'menu_difficulty') {
-        titleText = 'Select Difficulty';
+        titleText = 'Select Difficulty (1 Player)';
         buttonTexts = ['Freeplay (No AI)', 'Easy', 'Medium', 'Hard'];
         buttonLabels = ['freeplay', 'easy', 'medium', 'hard'];
-    } else if (gameState === 'menu_mode') {
-        titleText = 'Select Game Mode';
+    } else if (gameState === 'menu_mode') { 
+        let diffText = isTwoPlayerMode ? '2 Player Mode' : `1P Diff: ${selectedDifficulty.toUpperCase()}`;
+        titleText = `Select Game Mode (${diffText})`;
         buttonTexts = ['Normal', 'Ice (No Friction)', 'Heatseeker'];
         buttonLabels = ['normal', 'ice', 'heatseeker'];
-    } else if (gameState === 'menu_settings') {
-        // If in settings, draw the settings menu instead
-        drawSettingsMenu();
-        return;
+    } else {
+        buttonsDrawn = false; // Don't draw main menu buttons if in a settings state
     }
     
-    ctx.font = '45px sans-serif'; 
-    ctx.fillText(titleText, CANVAS_WIDTH / 2, 255); 
+    if (buttonsDrawn) {
+        ctx.font = '45px sans-serif'; 
+        ctx.fillText(titleText, CANVAS_WIDTH / 2, 255); 
 
-    const buttonWidth = 270; 
-    const buttonHeight = 75; 
-    const startY = 300; 
-    const separation = 105; 
+        const buttonWidth = 270; 
+        const buttonHeight = 75; 
+        const startY = 300; 
+        const separation = 105; 
+        
+        buttonLabels.forEach((label, index) => {
+            const x = CANVAS_WIDTH / 2 - buttonWidth / 2;
+            const y = startY + index * separation;
+            
+            const isDifficultyButton = gameState === 'menu_difficulty';
+            const isSelected = isDifficultyButton && label === selectedDifficulty && !isTwoPlayerMode;
+            
+            if (isSelected) {
+                ctx.fillStyle = '#00A86B'; 
+            } else {
+                ctx.fillStyle = '#4facfe'; 
+            }
+            ctx.fillRect(x, y, buttonWidth, buttonHeight);
+
+            ctx.fillStyle = '#fff'; 
+            ctx.font = '36px sans-serif'; 
+            ctx.fillText(buttonTexts[index], CANVAS_WIDTH / 2, y + 50); 
+        });
+    }
     
-    buttonLabels.forEach((label, index) => {
-        const x = CANVAS_WIDTH / 2 - buttonWidth / 2;
-        const y = startY + index * separation;
-
-        ctx.fillStyle = '#4facfe'; 
-        ctx.fillRect(x, y, buttonWidth, buttonHeight);
-
-        ctx.fillStyle = '#fff'; 
-        ctx.font = '36px sans-serif'; 
-        ctx.fillText(buttonTexts[index], CANVAS_WIDTH / 2, y + 50); 
-    });
-    
-    // --- DEBUG BUTTON ---
     const DEBUG_BUTTON_WIDTH = 135; 
     const DEBUG_BUTTON_HEIGHT = 45; 
     const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15; 
-    const debugY = 15; 
+    let buttonY = 15; 
+    
+    // 1. DEBUG BUTTON
     const debugText = `DEBUG: ${debugMode ? 'ON' : 'OFF'}`;
-    
     ctx.fillStyle = debugMode ? '#FF0000' : '#888'; 
-    ctx.fillRect(debugX, debugY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
-    
+    ctx.fillRect(debugX, buttonY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
     ctx.fillStyle = '#fff';
     ctx.font = '20px sans-serif'; 
-    ctx.textAlign = 'center';
-    ctx.fillText(debugText, debugX + DEBUG_BUTTON_WIDTH / 2, debugY + 30); 
+    ctx.fillText(debugText, debugX + DEBUG_BUTTON_WIDTH / 2, buttonY + 30); 
 
-    // --- NEW SETTINGS BUTTON ---
-    const settingsY = debugY + DEBUG_BUTTON_HEIGHT + 15; // Right under debug button
-    const settingsText = 'SETTINGS';
-    
-    ctx.fillStyle = '#4facfe'; // Blue color for consistency
-    ctx.fillRect(debugX, settingsY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
-    
+    // 2. 2-PLAYER BUTTON
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    const twoPlayerText = `2 PLAYER: ${isTwoPlayerMode ? 'ON' : 'OFF'}`;
+    ctx.fillStyle = isTwoPlayerMode ? '#00A86B' : '#888'; 
+    ctx.fillRect(debugX, buttonY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
     ctx.fillStyle = '#fff';
     ctx.font = '20px sans-serif'; 
-    ctx.textAlign = 'center';
-    ctx.fillText(settingsText, debugX + DEBUG_BUTTON_WIDTH / 2, settingsY + 30);
-    // ---------------------------
+    ctx.fillText(twoPlayerText, debugX + DEBUG_BUTTON_WIDTH / 2, buttonY + 30); 
+
+    // 3. MODDED SETTINGS BUTTON (Renamed)
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    const moddedSettingsText = `MODDED SETTINGS`;
+    ctx.fillStyle = '#4facfe'; 
+    ctx.fillRect(debugX, buttonY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif'; 
+    ctx.fillText(moddedSettingsText, debugX + DEBUG_BUTTON_WIDTH / 2, buttonY + 30); 
+
+    // 4. VOLUME SETTINGS BUTTON (New)
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    const volumeSettingsText = `VOLUME SETTINGS`;
+    ctx.fillStyle = '#4facfe'; 
+    ctx.fillRect(debugX, buttonY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif'; 
+    ctx.fillText(volumeSettingsText, debugX + DEBUG_BUTTON_WIDTH / 2, buttonY + 30); 
 }
-
-function drawSettingsMenu() {
-    ctx.fillStyle = '#181820';
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    
-    ctx.fillStyle = '#eee';
-    ctx.font = '90px sans-serif'; 
-    ctx.textAlign = 'center';
-    ctx.fillText('Settings', CANVAS_WIDTH / 2, 150); 
-
-    const centerX = CANVAS_WIDTH / 2;
-    const sliderWidth = 400;
-    const sliderHeight = 15;
-    const knobRadius = 15;
-    const startY = 300;
-    const separation = 150; 
-    
-    // --- Music Volume Slider ---
-    const musicY = startY;
-    
-    // Label
-    ctx.fillStyle = '#eee';
-    ctx.font = '36px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Music Volume: ${musicVolume}%`, centerX - sliderWidth / 2, musicY - 30);
-    
-    // Slider Track
-    ctx.fillStyle = '#333';
-    ctx.fillRect(centerX - sliderWidth / 2, musicY, sliderWidth, sliderHeight);
-
-    // Slider Progress
-    ctx.fillStyle = '#4facfe';
-    const musicProgressWidth = sliderWidth * (musicVolume / 100);
-    ctx.fillRect(centerX - sliderWidth / 2, musicY, musicProgressWidth, sliderHeight);
-
-    // Slider Knob
-    ctx.fillStyle = '#eee';
-    ctx.beginPath();
-    ctx.arc(centerX - sliderWidth / 2 + musicProgressWidth, musicY + sliderHeight / 2, knobRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // --- SFX Volume Slider ---
-    const sfxY = startY + separation;
-    
-    // Label
-    ctx.fillStyle = '#eee';
-    ctx.textAlign = 'left';
-    ctx.fillText(`SFX Volume: ${sfxVolume}%`, centerX - sliderWidth / 2, sfxY - 30);
-    
-    // Slider Track
-    ctx.fillStyle = '#333';
-    ctx.fillRect(centerX - sliderWidth / 2, sfxY, sliderWidth, sliderHeight);
-
-    // Slider Progress
-    ctx.fillStyle = '#ff9a44';
-    const sfxProgressWidth = sliderWidth * (sfxVolume / 100);
-    ctx.fillRect(centerX - sliderWidth / 2, sfxY, sfxProgressWidth, sliderHeight);
-
-    // Slider Knob
-    ctx.fillStyle = '#eee';
-    ctx.beginPath();
-    ctx.arc(centerX - sliderWidth / 2 + sfxProgressWidth, sfxY + sliderHeight / 2, knobRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // --- BACK BUTTON ---
-    const buttonWidth = 270; 
-    const buttonHeight = 75; 
-    const backX = centerX - buttonWidth / 2;
-    const backY = sfxY + separation;
-    
-    ctx.fillStyle = '#888'; 
-    ctx.fillRect(backX, backY, buttonWidth, buttonHeight);
-
-    ctx.fillStyle = '#fff'; 
-    ctx.font = '36px sans-serif'; 
-    ctx.textAlign = 'center';
-    ctx.fillText('BACK', centerX, backY + 50);
-}
-
-/**
- * Handles the logic for interacting with the sliders (click and drag updates) and the Back button.
- * @param {Event} e - The mouse event (click, mousedown, mouseup).
- * @param {DOMRect} rect - The canvas bounding rectangle.
- * @returns {boolean} True if an interaction occurred.
- */
-function handleSettingsInteraction(e, rect) {
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
-    const centerX = CANVAS_WIDTH / 2;
-    const sliderWidth = 400;
-    const sliderHeight = 15;
-    const knobRadius = 15;
-    const startY = 300;
-    const separation = 150; 
-    
-    const sliderMinX = centerX - sliderWidth / 2;
-    const sliderMaxX = centerX + sliderWidth / 2;
-    
-    let interactionOccurred = false;
-
-    // Music Slider Area
-    const musicY = startY;
-    const isMusicSliderArea = mouseY >= musicY && mouseY <= musicY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX;
-    
-    if (isMusicSliderArea) {
-        let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
-        musicVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
-        
-        // Apply volume change immediately
-        AUDIO.backgroundMusic.volume = musicVolume / 100;
-        interactionOccurred = true; 
-    }
-
-    // SFX Slider Area
-    const sfxY = startY + separation;
-    const isSFXSliderArea = mouseY >= sfxY && mouseY <= sfxY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX;
-
-    if (isSFXSliderArea) {
-        let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
-        sfxVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
-        
-        // SFX volume is applied in playGoalSound, but update the Audio object immediately
-        AUDIO.goal.volume = sfxVolume / 100;
-        
-        // Play a quick test sound when changing SFX volume on mouseup/click (only check if not dragging, i.e., in click mode)
-        if (e.type === 'mouseup' || e.type === 'click') {
-             const testSound = new Audio('pocket league/goal_sound.mp3'); 
-             testSound.volume = sfxVolume / 100;
-             testSound.play().catch(err => console.error("Error playing test sound:", err));
-        }
-        interactionOccurred = true; 
-    }
-    
-    // Back Button Area
-    const buttonWidth = 270; 
-    const buttonHeight = 75; 
-    const backX = centerX - buttonWidth / 2;
-    const backY = sfxY + separation;
-
-    if (mouseX >= backX && mouseX <= backX + buttonWidth && mouseY >= backY && mouseY <= backY + buttonHeight) {
-        gameState = 'menu_difficulty'; // Return to the difficulty selection menu
-        interactionOccurred = true;
-    }
-    
-    return interactionOccurred;
-}
-
-// Global variable to track if a slider is being dragged
-let isDraggingSlider = false;
-
-function handleMenuMousedown(e) {
-    if (gameState !== 'menu_settings') return;
-
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const centerX = CANVAS_WIDTH / 2;
-    const sliderWidth = 400;
-    const sliderHeight = 15;
-    const startY = 300;
-    const separation = 150; 
-    const sliderMinX = centerX - sliderWidth / 2;
-    const sliderMaxX = centerX + sliderWidth / 2;
-    
-    // Check Music Slider Track Area
-    const musicY = startY;
-    if (mouseY >= musicY && mouseY <= musicY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX) {
-        handleSettingsInteraction(e, rect); // Set volume immediately on mousedown
-        isDraggingSlider = 'music';
-        return;
-    }
-
-    // Check SFX Slider Track Area
-    const sfxY = startY + separation;
-    if (mouseY >= sfxY && mouseY <= sfxY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX) {
-        handleSettingsInteraction(e, rect); // Set volume immediately on mousedown
-        isDraggingSlider = 'sfx';
-        return;
-    }
-}
-
-function handleMenuMousemove(e) {
-    if (gameState !== 'menu_settings' || !isDraggingSlider) return;
-    
-    // Update the slider position during a drag
-    const rect = canvas.getBoundingClientRect();
-    handleSettingsInteraction(e, rect);
-}
-
-function handleMenuMouseup(e) {
-    if (isDraggingSlider === 'sfx') {
-        // Play SFX test sound when user releases the SFX slider
-        const testSound = new Audio('pocket league/goal_sound.mp3'); 
-        testSound.volume = sfxVolume / 100;
-        testSound.play().catch(err => console.error("Error playing test sound on release:", err));
-    }
-    isDraggingSlider = false;
-}
-
-// Attach the new event listeners for drag-and-drop support
-canvas.addEventListener('mousedown', handleMenuMousedown);
-canvas.addEventListener('mousemove', handleMenuMousemove);
-canvas.addEventListener('mouseup', handleMenuMouseup);
 
 function handleMenuClick(e) {
-    // Attempt to start music on any click if it hasn't started yet (for mobile/browser restrictions)
     startBackgroundMusic(); 
 
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
-
-    if (gameState === 'menu_settings') {
-        // Handle Back button click (and fall-through click on slider areas)
-        handleSettingsInteraction(e, rect); 
-        return;
-    }
-
-    if (gameState !== 'menu_difficulty' && gameState !== 'menu_mode') return;
 
     const buttonWidth = 270;
     const buttonHeight = 75;
@@ -588,11 +694,14 @@ function handleMenuClick(e) {
     const separation = 105; 
     
     let buttonLabels;
-
-    if (gameState === 'menu_difficulty') {
+    
+    // --- Check Difficulty/Mode Buttons ---
+    if (gameState === 'menu_difficulty' && !isTwoPlayerMode) {
         buttonLabels = ['freeplay', 'easy', 'medium', 'hard'];
-    } else { 
+    } else if (gameState === 'menu_mode') {
         buttonLabels = ['normal', 'ice', 'heatseeker'];
+    } else {
+        buttonLabels = [];
     }
 
     buttonLabels.forEach((label, index) => {
@@ -600,31 +709,51 @@ function handleMenuClick(e) {
         const y = startY + index * separation;
 
         if (mouseX >= x && mouseX <= x + buttonWidth && mouseY >= y && mouseY <= y + buttonHeight) {
+            
             if (gameState === 'menu_difficulty') {
-                startGame(label);
-            } else {
+                setDifficulty(label);
+                gameState = 'menu_mode'; 
+            } else if (gameState === 'menu_mode') {
                 selectGameMode(label);
             }
         }
     });
     
-    // Check DEBUG button click
     const DEBUG_BUTTON_WIDTH = 135; 
     const DEBUG_BUTTON_HEIGHT = 45; 
     const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15;
-    const debugY = 15;
+    let buttonY = 15;
     
-    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= debugY && mouseY <= debugY + DEBUG_BUTTON_HEIGHT) {
+    // 1. DEBUG Button click
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= buttonY && mouseY <= buttonY + DEBUG_BUTTON_HEIGHT) {
         debugMode = !debugMode; 
-        drawMenu(); 
         return;
     }
-    
-    // Check SETTINGS button click
-    const settingsY = debugY + DEBUG_BUTTON_HEIGHT + 15;
-    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= settingsY && mouseY <= settingsY + DEBUG_BUTTON_HEIGHT) {
-        gameState = 'menu_settings';
-        drawMenu(); 
+
+    // 2. 2-PLAYER Button click
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= buttonY && mouseY <= buttonY + DEBUG_BUTTON_HEIGHT) {
+        isTwoPlayerMode = !isTwoPlayerMode; 
+        gameState = 'menu_difficulty'; 
+        resetGame();
+        // If switching from 2P to 1P, reset difficulty selection
+        if (!isTwoPlayerMode) {
+            setDifficulty(selectedDifficulty); 
+        }
+        return;
+    }
+
+    // 3. MODDED SETTINGS Button click (Old SETTINGS position)
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= buttonY && mouseY <= buttonY + DEBUG_BUTTON_HEIGHT) {
+        showPhysicsSettings();
+        return;
+    }
+
+    // 4. VOLUME SETTINGS Button click (New position)
+    buttonY += DEBUG_BUTTON_HEIGHT + 15;
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= buttonY && mouseY <= buttonY + DEBUG_BUTTON_HEIGHT) {
+        showVolumeSettings();
         return;
     }
 }
@@ -633,7 +762,8 @@ canvas.addEventListener('click', handleMenuClick);
 
 
 function updateAI() {
-    if (!playWithAI) return;
+    // AI is only updated if in 1P mode AND we have an AI opponent
+    if (!playWithAI || isTwoPlayerMode) return;
     
     const car = aiCar;
     const ballDist = distance(car, ball);
@@ -650,7 +780,7 @@ function updateAI() {
     if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
     if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
     
-    let accel = CAR_ACCEL * AI_AGGRESSION_FACTOR;
+    let accel = gameSettings.CAR_ACCEL * AI_AGGRESSION_FACTOR;
     let turn = 0;
     let boostActive = false;
     
@@ -660,47 +790,41 @@ function updateAI() {
         turn = -CAR_TURN_SPEED;
     }
     
+    // AI boost threshold is adjusted based on the AI's current aggression setting
     const adjustedBoostThreshold = AI_BOOST_THRESHOLD * (2 - AI_AGGRESSION_FACTOR); 
     
-    // --- HEATSEEKER BOOST DELAY LOGIC ---
     let isTooCloseToCenter = false;
     
     if (gameMode === 'heatseeker') {
-        // AI is Orange. Ball on Player (Blue) side is ball.x < CANVAS_WIDTH / 2
-        if (ball.x < CANVAS_WIDTH / 2) {
-            // Check if the ball is still near the center (e.g., within 150 units of the center line)
-            // 150 is the "delay zone" length from the center.
-            if (ball.x > CANVAS_WIDTH / 2 - 150) { 
-                isTooCloseToCenter = true;
-            }
+        if (ball.x < CANVAS_WIDTH / 2 && ball.x > CANVAS_WIDTH / 2 - 150) { 
+            isTooCloseToCenter = true;
         }
     }
 
-    // AI only boosts if distance is greater than threshold AND it's not starting a heatseeker round too close to center.
-    if (ballDist > adjustedBoostThreshold && car.boost > BOOST_DRAIN_RATE && !isTooCloseToCenter) {
+    // Check if AI boost can be activated
+    if (ballDist > adjustedBoostThreshold && car.boost >= gameSettings.BOOST_DRAIN_RATE && !isTwoPlayerMode && !isTooCloseToCenter) {
         boostActive = true;
     }
-    // ----------------------------------------
     
     car.vel.x += Math.cos(car.angle) * accel;
     car.vel.y += Math.sin(car.angle) * accel;
     car.angle += turn;
 
-    // Base max speed uses the AI Aggression Factor.
+    // AI's max non-boost speed is proportional to aggression factor
     let currentMax = BASE_MAX_SPEED * AI_AGGRESSION_FACTOR; 
 
     if (boostActive) {
-        // AI uses the BASE_BOOST_MAX_SPEED directly, same as player.
-        currentMax = BASE_BOOST_MAX_SPEED; 
-        car.boost -= BOOST_DRAIN_RATE; 
-    } else if (car.boost < 100) {
+        currentMax = gameSettings.BOOST_MAX_SPEED; 
+        car.boost -= gameSettings.BOOST_DRAIN_RATE; // Using setting
+    } else if (car.boost < 100 && !isTwoPlayerMode) {
         car.boost += BOOST_RECHARGE_RATE; 
     }
     
     car.boost = Math.max(0, Math.min(100, car.boost));
 
-    car.vel.x *= FRICTION;
-    car.vel.y *= FRICTION;
+    // Car friction is controlled by Modded Settings or Game Mode (Ice)
+    car.vel.x *= currentCarFriction;
+    car.vel.y *= currentCarFriction;
 
     let speed = Math.sqrt(car.vel.x**2 + car.vel.y**2);
     if (speed > currentMax) {
@@ -710,37 +834,58 @@ function updateAI() {
     
     car.x += car.vel.x;
     car.y += car.vel.y;
-    
-    if (debugMode) {
-        ctx.fillStyle = '#00FF00'; 
-        ctx.beginPath();
-        ctx.arc(targetX, targetY, 15, 0, Math.PI * 2);
-        ctx.fill();
-    }
 }
 
 
 function updateCar(car, isPlayer) {
+    
+    // Skip if this car is the AI car in Freeplay mode
+    if (car.id === 'orange' && !playWithAI && !isTwoPlayerMode) return; 
+    
     let accel = 0;
     let turn = 0;
     let boostActive = false;
     let currentMax = BASE_MAX_SPEED; 
 
     if (isPlayer) {
-        if (keys.w || keys.ArrowUp) accel = CAR_ACCEL;
-        if (keys.s || keys.ArrowDown) accel = -CAR_ACCEL / 2;
+        // --- Player 1 (Blue Car) Logic ---
         
+        // P1 movement keys (WASD for 1P/2P, Arrows for 1P only)
+        if (keys.w || (!isTwoPlayerMode && keys.ArrowUp)) accel = gameSettings.CAR_ACCEL;
+        else if (keys.s || (!isTwoPlayerMode && keys.ArrowDown)) accel = -gameSettings.CAR_ACCEL / 2;
+        
+        // P1 turning keys
         if (Math.abs(car.vel.x) > 0.1 || Math.abs(car.vel.y) > 0.1) {
-            if (keys.a || keys.ArrowLeft) turn = -CAR_TURN_SPEED;
-            if (keys.d || keys.ArrowRight) turn = CAR_TURN_SPEED;
+            if (keys.a || (!isTwoPlayerMode && keys.ArrowLeft)) turn = -CAR_TURN_SPEED;
+            else if (keys.d || (!isTwoPlayerMode && keys.ArrowRight)) turn = CAR_TURN_SPEED;
         }
 
-        if (keys[" "] && car.boost > 0) {
+        // P1 boost (only allowed in 1P mode) - Uses new gameSettings.BOOST_DRAIN_RATE
+        if (!isTwoPlayerMode && keys[" "] && car.boost >= gameSettings.BOOST_DRAIN_RATE) {
             boostActive = true;
         }
-    } else {
-        updateAI();
-        return;
+        
+    } else { 
+        // --- Orange Car Logic (AI or Player 2) ---
+        if (isTwoPlayerMode) {
+            // --- Player 2 (Orange Car) Logic (ARROWS only, NO BOOST) ---
+            
+            if (keys.ArrowUp) accel = gameSettings.CAR_ACCEL;
+            else if (keys.ArrowDown) accel = -gameSettings.CAR_ACCEL / 2;
+            
+            // P2 turning keys
+            if (Math.abs(car.vel.x) > 0.1 || Math.abs(car.vel.y) > 0.1) {
+                if (keys.ArrowLeft) turn = -CAR_TURN_SPEED;
+                else if (keys.ArrowRight) turn = CAR_TURN_SPEED;
+            }
+            
+            // No boost in 2P mode.
+            car.boost = 0;
+        } else {
+            // --- AI Logic (1P mode) ---
+            updateAI();
+            return; 
+        }
     }
     
     car.vel.x += Math.cos(car.angle) * accel;
@@ -748,17 +893,18 @@ function updateCar(car, isPlayer) {
     car.angle += turn;
 
     if (boostActive) {
-        // Player uses BASE_BOOST_MAX_SPEED
-        currentMax = BASE_BOOST_MAX_SPEED; 
-        car.boost -= BOOST_DRAIN_RATE; 
-    } else if (car.boost < 100) {
+        // Player boost speed is controlled by Modded Settings
+        currentMax = gameSettings.BOOST_MAX_SPEED; 
+        car.boost -= gameSettings.BOOST_DRAIN_RATE; // Using setting
+    } else if (car.boost < 100 && !isTwoPlayerMode) { 
         car.boost += BOOST_RECHARGE_RATE; 
     }
     
     car.boost = Math.max(0, Math.min(100, car.boost));
 
-    car.vel.x *= FRICTION;
-    car.vel.y *= FRICTION;
+    // Car friction is controlled by Modded Settings or Game Mode (Ice)
+    car.vel.x *= currentCarFriction;
+    car.vel.y *= currentCarFriction;
 
     let speed = Math.sqrt(car.vel.x**2 + car.vel.y**2);
     if (speed > currentMax) {
@@ -771,7 +917,8 @@ function updateCar(car, isPlayer) {
 }
 
 function resolveCarCollision(carA, carB) {
-    if (!playWithAI) return; 
+    if (!carA || !carB) return; // Defensive check
+    if ((carA.id === 'orange' && !playWithAI && !isTwoPlayerMode) || (carB.id === 'orange' && !playWithAI && !isTwoPlayerMode)) return; 
 
     let maxOverlapDist = CAR_MAX_DISTANCE * 2; 
     let dx = carB.x - carA.x;
@@ -794,7 +941,8 @@ function resolveCarCollision(carA, carB) {
 
         if (speedAlongNormal > 0) return;
 
-        let impulse = (-(1 + CAR_BOUNCE) * speedAlongNormal) / 2;
+        // Car bounce factor is controlled by Modded Settings
+        let impulse = (-(1 + gameSettings.CAR_BOUNCE) * speedAlongNormal) / 2;
         let impulseX = impulse * nx;
         let impulseY = impulse * ny;
 
@@ -806,6 +954,10 @@ function resolveCarCollision(carA, carB) {
 }
 
 function resolveCarBallCollision(car, ballObj) {
+    if (!car) return; // Defensive check
+    // Skip if this car is the AI car in Freeplay mode
+    if (car.id === 'orange' && !playWithAI && !isTwoPlayerMode) return; 
+
     let dx = ballObj.x - car.x;
     let dy = ballObj.y - car.y;
     
@@ -840,7 +992,6 @@ function resolveCarBallCollision(car, ballObj) {
         ballObj.x += nx_world * overlap;
         ballObj.y += ny_world * overlap;
 
-        // --- HEATSEEKER TARGET SWITCH ---
         if (gameMode === 'heatseeker' && gameState === 'playing') {
             ballHasBeenHit = true; 
             if (car.id === 'blue') {
@@ -849,7 +1000,6 @@ function resolveCarBallCollision(car, ballObj) {
                 heatseekerTargetCar = 'blue'; 
             }
         }
-        // --------------------------------
 
         let relVelX = ballObj.vel.x - car.vel.x;
         let relVelY = ballObj.vel.y - car.vel.y;
@@ -888,23 +1038,24 @@ function getCarCorners(car) {
 }
 
 function checkWallCollisionRect(car, bounceFactor) {
+    if (!car) return; // Defensive check
+    // Skip if this car is the AI car in Freeplay mode
+    if (car.id === 'orange' && !playWithAI && !isTwoPlayerMode) return; 
+    
     const corners = getCarCorners(car);
     
     corners.forEach(p => {
         let correctionX = 0;
         let correctionY = 0;
         
-        // Use a safe zone for straight wall collision detection that avoids corners
         const isOutsideCornerX = p.x > CORNER_RADIUS && p.x < CANVAS_WIDTH - CORNER_RADIUS;
         const isOutsideCornerY = p.y > CORNER_RADIUS && p.y < CANVAS_HEIGHT - CORNER_RADIUS;
 
-        // Check top/bottom boundaries (straight sections)
         if (isOutsideCornerX) {
             if (p.y < 0) correctionY = -p.y;
             else if (p.y > CANVAS_HEIGHT) correctionY = CANVAS_HEIGHT - p.y;
         }
 
-        // Check left/right boundaries (straight sections, excluding goal opening area)
         const isWithinGoalY = car.y > GOAL_START_Y && car.y < GOAL_START_Y + GOAL_WIDTH;
         if (isOutsideCornerY && !isWithinGoalY) {
              if (p.x < 0) correctionX = -p.x;
@@ -920,7 +1071,6 @@ function checkWallCollisionRect(car, bounceFactor) {
         }
     });
 
-    // Corner Circle Collision Check (Re-enabled)
     if (CORNER_RADIUS > 0) {
         const cornerPoints = [
             { x: CORNER_RADIUS, y: CORNER_RADIUS }, 
@@ -941,7 +1091,7 @@ function checkWallCollisionRect(car, bounceFactor) {
 
                 const speedAlongNormal = car.vel.x * nx_c + car.vel.y * ny_c;
                 if (speedAlongNormal < 0) {
-                    const impulse = (-(1 + bounceFactor) * speedAlongNormal);
+                    const impulse = (-(1 + CAR_WALL_RESPONSE) * speedAlongNormal);
                     car.vel.x += impulse * nx_c;
                     car.vel.y += impulse * ny_c;
                 }
@@ -958,6 +1108,7 @@ function checkWallCollisionCircle(object, bounceFactor) {
     if (object.x > CORNER_RADIUS && object.x < CANVAS_WIDTH - CORNER_RADIUS) {
         if (object.y < objRadius) {
             object.y = objRadius;
+            // Ball bounce factor is controlled by Modded Settings
             object.vel.y *= -bounceFactor;
         } else if (object.y > CANVAS_HEIGHT - objRadius) {
             object.y = CANVAS_HEIGHT - objRadius;
@@ -977,7 +1128,7 @@ function checkWallCollisionCircle(object, bounceFactor) {
         }
     }
 
-    // 3. Corner Collision Logic (Re-enabled)
+    // 3. Corner Collision Logic
     if (CORNER_RADIUS > 0) {
         const corners = [
             { x: CORNER_RADIUS, y: CORNER_RADIUS }, 
@@ -1001,6 +1152,7 @@ function checkWallCollisionCircle(object, bounceFactor) {
                 let speedAlongNormal = object.vel.x * nx + object.vel.y * ny;
 
                 if (speedAlongNormal < 0) {
+                    // Ball bounce factor is controlled by Modded Settings
                     let impulse = (-(1 + bounceFactor) * speedAlongNormal);
                     
                     object.vel.x += impulse * nx;
@@ -1014,12 +1166,12 @@ function checkWallCollisionCircle(object, bounceFactor) {
 
 function update() {
     updateCar(playerCar, true);
-    if (playWithAI) updateCar(aiCar, false);
+    if (playWithAI || isTwoPlayerMode) updateCar(aiCar, false);
 
+    // Ball friction is controlled by Game Mode
     ball.vel.x *= currentBallFriction;
     ball.vel.y *= currentBallFriction;
     
-    // --- HEATSEEKER LOGIC ---
     if (gameMode === 'heatseeker' && ballHasBeenHit) {
         const targetGoalX = (heatseekerTargetCar === 'blue') ? 0 : CANVAS_WIDTH;
         const targetGoalY = GOAL_Y;
@@ -1044,127 +1196,107 @@ function update() {
             }
         }
     }
-    // -------------------------
 
     ball.x += ball.vel.x;
     ball.y += ball.vel.y;
 
-    if (playWithAI) resolveCarCollision(playerCar, aiCar); 
+    if (playWithAI || isTwoPlayerMode) resolveCarCollision(playerCar, aiCar); 
 
     cars.forEach(car => checkWallCollisionRect(car, CAR_WALL_RESPONSE)); 
-    checkWallCollisionCircle(ball, WALL_BOUNCE); 
+    // Ball wall bounce is controlled by Modded Settings
+    checkWallCollisionCircle(ball, gameSettings.WALL_BOUNCE); 
 
-    // Car/Ball collision
     cars.forEach(car => {
         resolveCarBallCollision(car, ball); 
     });
     
-    // --- GOAL CHECK (Goal Scoring and Replay Trigger) ---
     let goalScored = false;
     let scorer = 'none';
-    let newScoreBlue = scores.blue; // Use temporary scores for goal check
+    let newScoreBlue = scores.blue; 
     let newScoreOrange = scores.orange;
 
-    if (ball.x < ball.radius) { // Ball entered Blue goal (Orange scored)
+    if (ball.x < ball.radius) { // Ball in Blue Goal
         if (ball.y > GOAL_START_Y && ball.y < GOAL_START_Y + GOAL_WIDTH) {
-            newScoreOrange++; // Increment the new score
+            newScoreOrange++; // Orange scores
             scorer = 'orange'; 
             goalScored = true;
         } 
-    } else if (ball.x > CANVAS_WIDTH - ball.radius) { // Ball entered Orange goal (Blue scored)
+    } else if (ball.x > CANVAS_WIDTH - ball.radius) { // Ball in Orange Goal
         if (ball.y > GOAL_START_Y && ball.y < GOAL_START_Y + GOAL_WIDTH) {
-            newScoreBlue++; // Increment the new score
+            newScoreBlue++; // Blue scores
             scorer = 'blue'; 
             goalScored = true;
         } 
     }
 
     if (goalScored) {
-        // --- PLAY GOAL SOUND ---
         playGoalSound();
-        // -----------------------
         
         lastGoalScoredBy = scorer;
-        postGoalScores.blue = newScoreBlue; // SAVE THE FINAL SCORE for display
+        postGoalScores.blue = newScoreBlue; 
         postGoalScores.orange = newScoreOrange;
 
-        // 1. Snapshot the history and prepare for playback
         currentReplayData = [...gameHistory];
         replayIndex = 0;
         
-        // 2. Switch state to replay
         gameState = 'replay';
         
-        // 3. Stop movement in the main game loop
         ball.vel.x = 0; ball.vel.y = 0;
         playerCar.vel.x = 0; playerCar.vel.y = 0;
-        if (playWithAI) { aiCar.vel.x = 0; aiCar.vel.y = 0; }
+        if (playWithAI || isTwoPlayerMode) { aiCar.vel.x = 0; aiCar.vel.y = 0; }
     }
 }
 
-/**
- * Records the current state of the game objects into the history buffer.
- */
 function recordState() {
     const currentState = {
         ball: { x: ball.x, y: ball.y, vel: { x: ball.vel.x, y: ball.vel.y }, radius: ball.radius, color: ball.color },
         playerCar: { x: playerCar.x, y: playerCar.y, angle: playerCar.angle, vel: { x: playerCar.vel.x, y: playerCar.vel.y }, color: playerCar.color, boost: playerCar.boost, id: playerCar.id },
-        aiCar: playWithAI ? { x: aiCar.x, y: aiCar.y, angle: aiCar.angle, vel: { x: aiCar.vel.x, y: aiCar.vel.y }, color: aiCar.color, boost: aiCar.boost, id: aiCar.id } : null,
+        // FIX: Only record aiCar state if it is currently in play (AI or 2P)
+        aiCar: (playWithAI || isTwoPlayerMode) ? { x: aiCar.x, y: aiCar.y, angle: aiCar.angle, vel: { x: aiCar.vel.x, y: aiCar.vel.y }, color: aiCar.color, boost: aiCar.boost, id: aiCar.id } : null,
         scores: { blue: scores.blue, orange: scores.orange } 
     };
 
     gameHistory.push(currentState);
 
-    // Maintain the circular buffer size
     if (gameHistory.length > MAX_HISTORY_FRAMES) {
         gameHistory.shift(); 
     }
 }
 
-/**
- * Handles the playback logic when gameState is 'replay'.
- */
 function replayLoop() {
-    // --- NEW: SKIP REPLAY LOGIC ---
     if (keys.f) {
-        // Set replay index to the end
         replayIndex = currentReplayData.length; 
-        keys.f = false; // Consume the keypress
+        keys.f = false; 
     }
-    // ----------------------------
 
     if (replayIndex >= currentReplayData.length) {
-        // Replay finished or skipped
-        
-        // Update the actual score only *after* the replay finishes
         scores.blue = postGoalScores.blue;
         scores.orange = postGoalScores.orange;
         
         randomizePositions();
         gameState = 'playing';
-        gameHistory = []; // Clear history for the new game
+        gameHistory = []; 
         return;
     }
 
     const state = currentReplayData[replayIndex];
     
-    // Restore states to temporary replay objects
     Object.assign(replayBall, state.ball);
     Object.assign(replayPlayerCar, state.playerCar);
     
-    if (playWithAI && state.aiCar) {
+    // FIX: Safely handle replayAiCar assignment. 
+    // If state.aiCar is null (meaning AI was off), set replayAiCar to null.
+    if (state.aiCar) {
         Object.assign(replayAiCar, state.aiCar);
     } else {
         replayAiCar = null;
     }
     
-    // TEMPORARILY display the pre-goal score during the replay
     scores.blue = state.scores.blue;
     scores.orange = state.scores.orange;
 
     replayIndex++;
     
-    // If we are at the very end of the replay, switch to displaying the post-goal score
     if (replayIndex === currentReplayData.length) {
         scores.blue = postGoalScores.blue;
         scores.orange = postGoalScores.orange;
@@ -1172,21 +1304,23 @@ function replayLoop() {
 }
 
 
-/**
- * Draws the car and its boost bar.
- * @param {object} car - The car object (live or replay snapshot).
- * @param {boolean} isReplay - True if drawing from a replay snapshot.
- */
 function drawCar(car, isReplay = false) {
-    // Determine which car object to use for drawing: the live one, or the temporary replay one.
-    const carToDraw = isReplay ? car : (car.id === 'blue' ? playerCar : aiCar);
+    let carToDraw;
+    if (isReplay) {
+        carToDraw = car;
+    } else {
+        carToDraw = (car.id === 'blue' ? playerCar : aiCar);
+    }
     
-    if (!carToDraw || (carToDraw.id === 'orange' && !playWithAI && !isReplay && carToDraw.x === undefined)) return; 
+    // Check if the car is defined or should be drawn (e.g., aiCar in Freeplay is excluded)
+    if (!carToDraw || (carToDraw.id === 'orange' && !playWithAI && !isTwoPlayerMode && !isReplay && carToDraw.x === undefined)) return; 
+
+    // FIX: If in replay and replayAiCar is null, skip drawing the orange car.
+    if (isReplay && carToDraw.id === 'orange' && carToDraw === null) return; 
 
     const CAR_DRAW_WIDTH = CAR_WIDTH; 
     const CAR_DRAW_HEIGHT = CAR_HEIGHT; 
 
-    // --- 1. DRAW CAR BODY AND THRUSTER ---
     ctx.save();
     ctx.translate(carToDraw.x, carToDraw.y);
     ctx.rotate(carToDraw.angle);
@@ -1204,19 +1338,19 @@ function drawCar(car, isReplay = false) {
     ctx.fillStyle = '#222';
     ctx.fillRect(7.5, -15, 22.5, 30); 
     
-    // Draw Boost Fire (Only in playing mode)
-    if (!isReplay) {
+    // Draw Boost Fire (Only in playing mode and NOT in 2P mode)
+    if (!isReplay && !isTwoPlayerMode) {
         let isBoosting = false;
         
         if (carToDraw.id === 'blue' && keys[" "]) {
             isBoosting = true;
         } else if (carToDraw.id === 'orange' && playWithAI) {
-            // Check if the AI is attempting to exceed base speed (i.e., boosting)
             let speedCheck = Math.sqrt(carToDraw.vel.x**2 + carToDraw.vel.y**2);
+            // Check if AI speed is near the max *non-boost* speed for its current aggression
             if (speedCheck > BASE_MAX_SPEED * AI_AGGRESSION_FACTOR + 1.5) isBoosting = true; 
         }
         
-        if (isBoosting && carToDraw.boost > 0.1) {
+        if (isBoosting && carToDraw.boost > gameSettings.BOOST_DRAIN_RATE) { // Use new setting for check
             ctx.fillStyle = '#ffaa00';
             ctx.beginPath();
             ctx.moveTo(-CAR_DRAW_WIDTH / 2, -7.5); 
@@ -1236,13 +1370,14 @@ function drawCar(car, isReplay = false) {
     const BAR_Y_OFFSET = 37.5; 
 
     if (carToDraw.x !== undefined) { 
-        // Background bar
-        ctx.fillStyle = '#333';
-        ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH, BAR_HEIGHT);
-        
-        // Boost level bar
-        ctx.fillStyle = '#ffaa00'; // Yellow/Orange color for boost
-        ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH * (carToDraw.boost / 100), BAR_HEIGHT);
+        // 2P mode cars have no boost, but we still draw the bar if it's the AI/1P
+        if (!isTwoPlayerMode || carToDraw.id === 'blue') {
+            ctx.fillStyle = '#333';
+            ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH, BAR_HEIGHT);
+            
+            ctx.fillStyle = '#ffaa00'; 
+            ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH * (carToDraw.boost / 100), BAR_HEIGHT);
+        }
     }
     
     // 🟣 Draw Car Hitbox if Debug Mode is ON
@@ -1271,7 +1406,6 @@ function drawGame() {
     ctx.lineWidth = 4;
     ctx.beginPath();
     
-    // Top border, corners, etc. (Boundary drawing logic simplified for brevity)
     ctx.moveTo(CORNER_RADIUS, 0);
     ctx.lineTo(CANVAS_WIDTH - CORNER_RADIUS, 0);
     ctx.arcTo(CANVAS_WIDTH, 0, CANVAS_WIDTH, CORNER_RADIUS, CORNER_RADIUS);
@@ -1304,20 +1438,17 @@ function drawGame() {
     ctx.fillRect(CANVAS_WIDTH - GOAL_DEPTH, GOAL_START_Y, GOAL_DEPTH, GOAL_WIDTH);
 
     
-    // --- DETERMINE OBJECTS TO DRAW ---
-    let ballToDraw = (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over' || gameState === 'menu_settings') ? ball : replayBall;
+    let ballToDraw = (gameState === 'playing' || gameState === 'game_over') ? ball : replayBall;
     
-    // Car Drawing (Pass the temporary replay objects when in replay mode)
     if (gameState === 'replay') {
         drawCar(replayPlayerCar, true);
-        if (playWithAI && replayAiCar) drawCar(replayAiCar, true);
-    } else if (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over' || gameState === 'menu_settings') {
-        // Draw live cars when playing or on kickoff screen or game over
+        // FIX: Only call drawCar for orange car if replayAiCar is not null
+        if (replayAiCar) drawCar(replayAiCar, true);
+    } else if (gameState === 'playing' || gameState === 'game_over') {
         drawCar(playerCar, false);
-        if (playWithAI) drawCar(aiCar, false);
+        if (playWithAI || isTwoPlayerMode) drawCar(aiCar, false);
     }
 
-    // Ball Drawing (Only draw if the ball object has been initialized)
     if (ballToDraw.x !== undefined) {
         ctx.beginPath();
         ctx.arc(ballToDraw.x, ballToDraw.y, ballToDraw.radius, 0, Math.PI * 2);
@@ -1338,16 +1469,38 @@ function drawGame() {
         }
     }
     
-    // Display "REPLAY" or "GAME OVER" text
     if (gameState === 'replay') {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-        ctx.font = '120px sans-serif'; 
-        ctx.textAlign = 'center';
-        ctx.fillText('REPLAY', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+        // --- NEW SCORER TEXT & REPLAY POSITIONING ---
+        const SCORER_Y = CANVAS_HEIGHT - 160;   
+        const REPLAY_Y = CANVAS_HEIGHT - 90; 
+        const SKIP_Y = CANVAS_HEIGHT - 50;   
         
+        let scorerText = '';
+        let scorerColor = '#eee';
+
+        if (lastGoalScoredBy === 'blue') {
+            scorerText = 'BLUE SCORED!';
+            scorerColor = '#4facfe'; // Blue color
+        } else if (lastGoalScoredBy === 'orange') {
+            scorerText = 'ORANGE SCORED!';
+            scorerColor = '#ff9a44'; // Orange color
+        }
+        
+        // Draw Scorer Text
+        ctx.fillStyle = scorerColor;
+        ctx.font = '60px sans-serif'; 
+        ctx.textAlign = 'center';
+        ctx.fillText(scorerText, CANVAS_WIDTH / 2, SCORER_Y); 
+        
+        // Draw REPLAY Text
         ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-        ctx.font = '30px sans-serif'; 
-        ctx.fillText('(Press F to Skip)', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+        ctx.font = '60px sans-serif'; 
+        ctx.fillText('REPLAY', CANVAS_WIDTH / 2, REPLAY_Y); 
+        
+        // Draw Skip Text
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '20px sans-serif'; 
+        ctx.fillText('(Press F to Skip)', CANVAS_WIDTH / 2, SKIP_Y); 
     } else if (gameState === 'game_over') {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
         ctx.font = '120px sans-serif'; 
@@ -1368,33 +1521,43 @@ function drawGame() {
     }
 
     // --- SCORE & TIME DISPLAY ---
-    
-    // Blue Score
     ctx.fillStyle = '#4facfe';
     ctx.font = '60px sans-serif'; 
     ctx.textAlign = 'center';
     ctx.fillText(scores.blue, CANVAS_WIDTH / 2 - 200, 67.5); 
     
-    // Time Display
     ctx.fillStyle = '#eee';
     ctx.font = '72px sans-serif'; 
     ctx.fillText(formatTime(timeRemaining), CANVAS_WIDTH / 2, 67.5); 
     
-    // Orange Score
     ctx.fillStyle = '#ff9a44';
     ctx.font = '60px sans-serif'; 
     ctx.fillText(scores.orange, CANVAS_WIDTH / 2 + 200, 67.5); 
     
-    // Info Text
+    // Info Text (at CANVAS_HEIGHT - 15)
     ctx.fillStyle = '#888';
     ctx.font = '21px sans-serif'; 
     ctx.textAlign = 'center';
-    ctx.fillText(`Mode: ${gameMode.toUpperCase()} | WASD/Arrows to Drive | SPACE to Boost | F to Skip Replay | M to Menu`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 15); 
+    
+    let infoText;
+    if (isTwoPlayerMode) {
+        infoText = `Mode: ${gameMode.toUpperCase()} (2 PLAYER) | P1: WASD (Blue) | P2: ARROWS (Orange) | No Boost | M to Menu`;
+    } else {
+        infoText = `Mode: ${gameMode.toUpperCase()} (Difficulty: ${selectedDifficulty.toUpperCase()}) | P1: WASD/Arrows to Drive | SPACE to Boost | M to Menu`;
+    }
+    ctx.fillText(infoText, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 15); 
 }
 
 function loop() {
-    if (gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'menu_settings') {
+    // NEW: 2-Player Skip Logic: Immediately transition to mode selection if 2P is on.
+    if (gameState === 'menu_difficulty' && isTwoPlayerMode) {
+        gameState = 'menu_mode';
+    }
+    
+    if (gameState === 'menu_difficulty' || gameState === 'menu_mode') {
         drawMenu();
+    } else if (gameState === 'menu_settings_physics' || gameState === 'menu_settings_volume') {
+        // Handled by DOM, loop continues to maintain canvas focus when returning
     } else if (gameState === 'playing') {
         update();
         recordState();
@@ -1403,10 +1566,12 @@ function loop() {
         replayLoop();
         drawGame();
     } else if (gameState === 'game_over') {
-        drawGame(); // Draws the final score and game over screen
+        drawGame(); 
     }
     requestAnimationFrame(loop);
 }
 
 loop();
-</script></body></html>
+</script>
+</body>
+</html>
