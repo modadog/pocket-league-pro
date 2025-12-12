@@ -89,8 +89,8 @@ let replayAiCar = {};
 const AUDIO = {
     // Single sound for any goal scored
     goal: new Audio('pocket league/goal_sound.mp3'),
-    // Background music (Updated file name)
-    backgroundMusic: new Audio('pocket league/new_music.mp3')
+    // Background music (Updated file name to new_music.mp3)
+    backgroundMusic: new Audio('pocket league/new_music.mp3') 
 };
 
 // Configure the music to loop and set volumes based on variables
@@ -115,7 +115,7 @@ function startBackgroundMusic() {
 
 function playGoalSound() {
     // Apply current SFX volume before playing
-    AUDIO.goal.volume = sfxVolume / 100;
+    AUDIO.goal.volume = sfxVolume / 100; // Use current SFX volume
     // Ensure playback starts from the beginning of the goal sound
     AUDIO.goal.currentTime = 0;
     AUDIO.goal.play().catch(e => console.error("Error playing goal sound:", e));
@@ -439,6 +439,12 @@ function drawSettingsMenu() {
     ctx.fillText('BACK', centerX, backY + 50);
 }
 
+/**
+ * Handles the logic for interacting with the sliders (click and drag updates) and the Back button.
+ * @param {Event} e - The mouse event (click, mousedown, mouseup).
+ * @param {DOMRect} rect - The canvas bounding rectangle.
+ * @returns {boolean} True if an interaction occurred.
+ */
 function handleSettingsInteraction(e, rect) {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -453,38 +459,39 @@ function handleSettingsInteraction(e, rect) {
     const sliderMinX = centerX - sliderWidth / 2;
     const sliderMaxX = centerX + sliderWidth / 2;
     
+    let interactionOccurred = false;
+
     // Music Slider Area
     const musicY = startY;
-    if (mouseY >= musicY - knobRadius && mouseY <= musicY + sliderHeight + knobRadius && 
-        mouseX >= sliderMinX - knobRadius && mouseX <= sliderMaxX + knobRadius) {
-        
+    const isMusicSliderArea = mouseY >= musicY && mouseY <= musicY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX;
+    
+    if (isMusicSliderArea) {
         let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
         musicVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
         
         // Apply volume change immediately
         AUDIO.backgroundMusic.volume = musicVolume / 100;
-        return true; 
+        interactionOccurred = true; 
     }
 
     // SFX Slider Area
     const sfxY = startY + separation;
-    if (mouseY >= sfxY - knobRadius && mouseY <= sfxY + sliderHeight + knobRadius && 
-        mouseX >= sliderMinX - knobRadius && mouseX <= sliderMaxX + knobRadius) {
-        
+    const isSFXSliderArea = mouseY >= sfxY && mouseY <= sfxY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX;
+
+    if (isSFXSliderArea) {
         let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
         sfxVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
         
-        // SFX volume is applied in playGoalSound, but update for potential immediate sound
+        // SFX volume is applied in playGoalSound, but update the Audio object immediately
         AUDIO.goal.volume = sfxVolume / 100;
         
-        // Play a quick test sound when changing SFX volume
+        // Play a quick test sound when changing SFX volume on mouseup/click (only check if not dragging, i.e., in click mode)
         if (e.type === 'mouseup' || e.type === 'click') {
-             // Create a temporary sound just for testing slider change
              const testSound = new Audio('pocket league/goal_sound.mp3'); 
              testSound.volume = sfxVolume / 100;
-             testSound.play().catch(e => console.error("Error playing test sound:", e));
+             testSound.play().catch(err => console.error("Error playing test sound:", err));
         }
-        return true; 
+        interactionOccurred = true; 
     }
     
     // Back Button Area
@@ -495,10 +502,10 @@ function handleSettingsInteraction(e, rect) {
 
     if (mouseX >= backX && mouseX <= backX + buttonWidth && mouseY >= backY && mouseY <= backY + buttonHeight) {
         gameState = 'menu_difficulty'; // Return to the difficulty selection menu
-        return true;
+        interactionOccurred = true;
     }
     
-    return false;
+    return interactionOccurred;
 }
 
 // Global variable to track if a slider is being dragged
@@ -513,27 +520,24 @@ function handleMenuMousedown(e) {
 
     const centerX = CANVAS_WIDTH / 2;
     const sliderWidth = 400;
-    const knobRadius = 15;
     const sliderHeight = 15;
     const startY = 300;
     const separation = 150; 
     const sliderMinX = centerX - sliderWidth / 2;
     const sliderMaxX = centerX + sliderWidth / 2;
     
-    // Check Music Slider Knob
+    // Check Music Slider Track Area
     const musicY = startY;
-    const musicKnobX = sliderMinX + sliderWidth * (musicVolume / 100);
-    if (mouseX >= musicKnobX - knobRadius && mouseX <= musicKnobX + knobRadius &&
-        mouseY >= musicY && mouseY <= musicY + sliderHeight) {
+    if (mouseY >= musicY && mouseY <= musicY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX) {
+        handleSettingsInteraction(e, rect); // Set volume immediately on mousedown
         isDraggingSlider = 'music';
         return;
     }
 
-    // Check SFX Slider Knob
+    // Check SFX Slider Track Area
     const sfxY = startY + separation;
-    const sfxKnobX = sliderMinX + sliderWidth * (sfxVolume / 100);
-    if (mouseX >= sfxKnobX - knobRadius && mouseX <= sfxKnobX + knobRadius &&
-        mouseY >= sfxY && mouseY <= sfxY + sliderHeight) {
+    if (mouseY >= sfxY && mouseY <= sfxY + sliderHeight && mouseX >= sliderMinX && mouseX <= sliderMaxX) {
+        handleSettingsInteraction(e, rect); // Set volume immediately on mousedown
         isDraggingSlider = 'sfx';
         return;
     }
@@ -542,24 +546,9 @@ function handleMenuMousedown(e) {
 function handleMenuMousemove(e) {
     if (gameState !== 'menu_settings' || !isDraggingSlider) return;
     
+    // Update the slider position during a drag
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-
-    const centerX = CANVAS_WIDTH / 2;
-    const sliderWidth = 400;
-    const sliderMinX = centerX - sliderWidth / 2;
-    const sliderMaxX = centerX + sliderWidth / 2;
-
-    let newX = Math.max(sliderMinX, Math.min(sliderMaxX, mouseX));
-    let newVolume = Math.round(((newX - sliderMinX) / sliderWidth) * 100);
-    
-    if (isDraggingSlider === 'music') {
-        musicVolume = newVolume;
-        AUDIO.backgroundMusic.volume = musicVolume / 100;
-    } else if (isDraggingSlider === 'sfx') {
-        sfxVolume = newVolume;
-        AUDIO.goal.volume = sfxVolume / 100; // Update volume immediately
-    }
+    handleSettingsInteraction(e, rect);
 }
 
 function handleMenuMouseup(e) {
@@ -572,6 +561,7 @@ function handleMenuMouseup(e) {
     isDraggingSlider = false;
 }
 
+// Attach the new event listeners for drag-and-drop support
 canvas.addEventListener('mousedown', handleMenuMousedown);
 canvas.addEventListener('mousemove', handleMenuMousemove);
 canvas.addEventListener('mouseup', handleMenuMouseup);
@@ -585,7 +575,7 @@ function handleMenuClick(e) {
     const mouseY = e.clientY - rect.top;
 
     if (gameState === 'menu_settings') {
-        // Handle Back button click only (slider logic is in mousedown/move)
+        // Handle Back button click (and fall-through click on slider areas)
         handleSettingsInteraction(e, rect); 
         return;
     }
@@ -1315,13 +1305,13 @@ function drawGame() {
 
     
     // --- DETERMINE OBJECTS TO DRAW ---
-    let ballToDraw = (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over') ? ball : replayBall;
+    let ballToDraw = (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over' || gameState === 'menu_settings') ? ball : replayBall;
     
     // Car Drawing (Pass the temporary replay objects when in replay mode)
     if (gameState === 'replay') {
         drawCar(replayPlayerCar, true);
         if (playWithAI && replayAiCar) drawCar(replayAiCar, true);
-    } else if (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over') {
+    } else if (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over' || gameState === 'menu_settings') {
         // Draw live cars when playing or on kickoff screen or game over
         drawCar(playerCar, false);
         if (playWithAI) drawCar(aiCar, false);
