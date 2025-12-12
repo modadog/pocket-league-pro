@@ -1,0 +1,1166 @@
+<!DOCTYPE html><html><head><title>Pocket League Pro - Final Debug Setup</title></head><body style="margin:0; background:#181820; display:flex; justify-content:center; align-items:center; height:100vh;"><canvas id="gameCanvas" width="1200" height="750" style="border:4px solid #333; display:block;"></canvas><script>
+// SCALING FACTOR APPLIED: 1.5
+const CANVAS_WIDTH = 1200; // Scaled (800 * 1.5)
+const CANVAS_HEIGHT = 750; // Scaled (500 * 1.5)
+const CORNER_RADIUS = 15; // Corner radius reduced (10 * 1.5)
+const FRICTION = 0.96;
+const CAR_ACCEL = 0.45;
+
+const BASE_MAX_SPEED = 2.5; 
+// The maximum speed when boosting, now equal for all cars.
+const BASE_BOOST_MAX_SPEED = 12; 
+
+const CAR_TURN_SPEED = 0.08;
+const WALL_BOUNCE = 0.85; 
+const CAR_WALL_RESPONSE = 0.5; 
+const CAR_BOUNCE = 0.8; 
+const GOAL_WIDTH = 300; // Scaled (200 * 1.5)
+const GOAL_START_Y = (CANVAS_HEIGHT - GOAL_WIDTH) / 2;
+const BOOST_DRAIN_RATE = 1; 
+const BOOST_RECHARGE_RATE = 0.2; 
+
+const GOAL_Y = CANVAS_HEIGHT / 2;
+// AI still uses this threshold to decide *when* to boost, 
+// but the boost speed is now the same as the player's.
+const AI_BOOST_THRESHOLD = 300; // Scaled value
+const SAFE_SPAWN_PADDING = 120; // Scaled value (80 * 1.5) for car spawns
+
+// --- GAME MODE CONSTANTS & VARIABLES ---
+let gameState = 'menu_difficulty'; 
+let gameMode = 'normal'; 
+let heatseekerTargetCar = 'orange'; // Goal the ball is currently seeking: 'blue' or 'orange'
+let ballHasBeenHit = false; // Controls if the seeking force is active
+let lastGoalScoredBy = 'none'; // 'blue', 'orange', or 'none'. Used for heatseeker spawn.
+
+const NORMAL_BALL_FRICTION = 0.98;
+const ICE_BALL_FRICTION = 1.0; 
+let currentBallFriction = NORMAL_BALL_FRICTION;
+
+// --- HEATSEEKER CONSTANTS ---
+const HEATSEEKER_BASE_ACCEL = 0.07; 
+const MAX_SEEKING_SPEED = 12; 
+const HS_SPAWN_X_FORWARD = 360; 
+const HS_SPAWN_Y_INWARD = 120; 
+
+// --- REPLAY HISTORY CONSTANTS & ARRAY ---
+const FRAMES_PER_SECOND = 60;
+const REPLAY_DURATION_SECONDS = 10; 
+const MAX_HISTORY_FRAMES = REPLAY_DURATION_SECONDS * FRAMES_PER_SECOND;
+let gameHistory = [];
+let replayIndex = 0; 
+let currentReplayData = []; 
+let postGoalScores = { blue: 0, orange: 0 }; 
+// ----------------------------------------
+
+// --- GAME TIMER VARIABLES ---
+const GAME_DURATION_SECONDS = 300; // 5 minutes
+let timeRemaining = GAME_DURATION_SECONDS;
+let gameTimerInterval = null; 
+// ----------------------------------
+
+// --- CAR RECTANGULAR HITBOX DIMENSIONS ---
+const CAR_WIDTH = 60; // Scaled (40 * 1.5)
+const CAR_HEIGHT = 45; // Scaled (30 * 1.5)
+const CAR_HALF_WIDTH = CAR_WIDTH / 2; 
+const CAR_HALF_HEIGHT = CAR_HEIGHT / 2; 
+const CAR_MAX_DISTANCE = Math.sqrt(CAR_HALF_WIDTH**2 + CAR_HALF_HEIGHT**2); 
+
+// --- GAME OBJECTS ---
+let AI_AGGRESSION_FACTOR = 1; 
+let playWithAI = true; 
+let scores = { blue: 0, orange: 0 };
+let debugMode = false; 
+
+// Ball Radius Scaled
+const ball = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, vel: { x: 0, y: 0 }, radius: 22.5, color: '#eef' }; // (15 * 1.5)
+
+// Temporary objects to hold state during replay
+let replayBall = {};
+let replayPlayerCar = {};
+let replayAiCar = {};
+
+// --- AUDIO SETUP ---
+// NOTE: Paths updated to use your 'pocket league' folder and file names!
+const AUDIO = {
+    // Single sound for any goal scored
+    goal: new Audio('pocket league/goal_sound.mp3'),
+    // Background music
+    backgroundMusic: new Audio('pocket league/music.mp3')
+};
+
+// Configure the music to loop and set volumes
+AUDIO.goal.volume = 0.6;
+AUDIO.backgroundMusic.loop = true; // Crucial for continuous play
+AUDIO.backgroundMusic.volume = 0.3; // Lower volume so it doesn't overpower the game
+
+// Tracks if music has been played to meet browser auto-play requirements
+let musicHasStarted = false; 
+
+function startBackgroundMusic() {
+    if (!musicHasStarted) {
+        // Attempt to play music. Browsers often require a user interaction first.
+        AUDIO.backgroundMusic.play().then(() => {
+            musicHasStarted = true;
+        }).catch(e => {
+            console.warn("Autoplay was prevented. Music will start after the first click.", e);
+            // If autoplay fails, we rely on the first user click/touch to start it.
+        });
+    }
+}
+
+function playGoalSound() {
+    // Ensure playback starts from the beginning of the goal sound
+    AUDIO.goal.currentTime = 0;
+    AUDIO.goal.play().catch(e => console.error("Error playing goal sound:", e));
+}
+// --- END AUDIO SETUP ---
+
+
+function initializeKeys() {
+    // Added 'f' for replay skip
+    return { w: false, s: false, a: false, d: false, " ": false, ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false, m: false, f: false };
+}
+let keys = initializeKeys();
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const playerCar = { id: 'blue', x: 150, y: 375, angle: 0, vel: { x: 0, y: 0 }, color: '#4facfe', boost: 100 }; // Scaled initial positions
+const aiCar = { id: 'orange', x: CANVAS_WIDTH - 150, y: 375, angle: Math.PI, vel: { x: 0, y: 0 }, color: '#ff9a44', boost: 100 }; // Scaled initial positions
+let cars = [playerCar]; 
+
+function distance(c1, c2) { return Math.sqrt((c1.x - c2.x)**2 + (c1.y - c2.y)**2); }
+
+/**
+ * Converts time in seconds to M:SS format.
+ * @param {number} totalSeconds - The total number of seconds remaining.
+ * @returns {string} The formatted time string.
+ */
+function formatTime(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    const paddedSeconds = seconds < 10 ? `0${seconds}` : seconds;
+    return `${minutes}:${paddedSeconds}`;
+}
+
+function startTimer() {
+    if (gameTimerInterval) clearInterval(gameTimerInterval);
+    
+    gameTimerInterval = setInterval(() => {
+        if (gameState === 'playing') {
+            timeRemaining--;
+            if (timeRemaining <= 0) {
+                timeRemaining = 0;
+                clearInterval(gameTimerInterval);
+                gameState = 'game_over';
+            }
+        }
+        // Timer pauses automatically if gameState is 'replay' or menus
+    }, 1000);
+}
+
+
+function randomizePositions() {
+    const halfWidth = CANVAS_WIDTH / 2;
+    const midY = CANVAS_HEIGHT / 2;
+    const P = SAFE_SPAWN_PADDING; 
+    let ballX, ballY;
+
+    // Standard Car Spawn Points
+    const spawnPoints = [
+        { blueX: halfWidth / 2 - 45, blueY: midY, orangeX: CANVAS_WIDTH - (halfWidth / 2) + 45, orangeY: midY }, 
+        { blueX: P, blueY: P, orangeX: CANVAS_WIDTH - P, orangeY: CANVAS_HEIGHT - P }, 
+        { blueX: P, blueY: CANVAS_HEIGHT - P, orangeX: CANVAS_WIDTH - P, orangeY: P }, 
+        { blueX: halfWidth / 2 - 45, blueY: midY - 225, orangeX: CANVAS_WIDTH - (halfWidth / 2) + 45, orangeY: midY + 225 }, 
+        { blueX: halfWidth / 2 - 180, blueY: midY + 180, orangeX: CANVAS_WIDTH - (halfWidth / 2) + 180, orangeY: midY - 180 } 
+    ];
+
+    const selectedPair = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+
+    playerCar.x = selectedPair.blueX; 
+    playerCar.y = selectedPair.blueY; 
+    playerCar.angle = Math.atan2(midY - playerCar.y, halfWidth - playerCar.x);
+    playerCar.vel.x = 0; playerCar.vel.y = 0; playerCar.boost = 100;
+    
+    if (playWithAI) {
+        aiCar.x = selectedPair.orangeX; 
+        aiCar.y = selectedPair.orangeY; 
+        aiCar.angle = Math.atan2(midY - aiCar.y, halfWidth - aiCar.x);
+        aiCar.vel.x = 0; aiCar.vel.y = 0; aiCar.boost = 100;
+    }
+
+    // --- Heatseeker Kickoff Logic (Forward Corner Spawn, Never Center) ---
+    if (gameMode === 'heatseeker') {
+        let spawnType = lastGoalScoredBy;
+        
+        // Handle initial kickoff by choosing a random side
+        if (spawnType === 'none') {
+            spawnType = Math.random() < 0.5 ? 'blue' : 'orange';
+        }
+        
+        if (spawnType === 'blue') { 
+            // Blue scored (Orange lost) -> Ball spawns on Orange half (far side, top wall)
+            ballX = CANVAS_WIDTH - HS_SPAWN_X_FORWARD; 
+            ballY = HS_SPAWN_Y_INWARD; 
+            heatseekerTargetCar = 'blue'; 
+        } else if (spawnType === 'orange') { 
+            // Orange scored (Blue lost) -> Ball spawns on Blue half (near side, bottom wall)
+            ballX = HS_SPAWN_X_FORWARD; 
+            ballY = CANVAS_HEIGHT - HS_SPAWN_Y_INWARD; 
+            heatseekerTargetCar = 'orange'; 
+        }
+    } else {
+        // Normal Mode: Center Spawn
+        ballX = halfWidth; 
+        ballY = midY;
+    }
+
+    // Spawn ball
+    ball.x = ballX; 
+    ball.y = ballY;
+    ball.vel.x = 0; 
+    ball.vel.y = 0;
+    ballHasBeenHit = false; // Reset hit state
+}
+
+function resetGame() {
+    if (gameTimerInterval) clearInterval(gameTimerInterval);
+    timeRemaining = GAME_DURATION_SECONDS;
+    scores = { blue: 0, orange: 0 };
+    postGoalScores = { blue: 0, orange: 0 }; 
+    lastGoalScoredBy = 'none'; 
+    gameHistory = [];
+    currentReplayData = []; 
+    randomizePositions(); 
+}
+
+window.addEventListener('keydown', e => { 
+    if(keys.hasOwnProperty(e.key.toLowerCase()) || e.key === " " || e.key.startsWith('Arrow')) keys[e.key.toLowerCase()]=true; 
+    
+    if(e.key.toLowerCase() === 'm' && (gameState === 'playing' || gameState === 'game_over' || gameState === 'replay')) {
+        // If 'M' is pressed, reset game and go to menu
+        resetGame(); 
+        gameState = 'menu_difficulty'; 
+    }
+});
+window.addEventListener('keyup', e => { 
+    if(keys.hasOwnProperty(e.key.toLowerCase()) || e.key === " " || e.key.startsWith('Arrow')) keys[e.key.toLowerCase()]=false;
+});
+
+function startGame(difficulty) {
+    cars.length = 0;
+    cars.push(playerCar); 
+
+    if (difficulty === 'freeplay') {
+        AI_AGGRESSION_FACTOR = 0;
+        playWithAI = false;
+    } else {
+        playWithAI = true;
+        cars.push(aiCar); 
+        if (difficulty === 'easy') AI_AGGRESSION_FACTOR = 0.5;
+        else if (difficulty === 'medium') AI_AGGRESSION_FACTOR = 1.0;
+        else if (difficulty === 'hard') AI_AGGRESSION_FACTOR = 1.5;
+    }
+    
+    gameState = 'menu_mode'; 
+    startBackgroundMusic(); // Start the music as soon as we leave the initial menu
+}
+
+function selectGameMode(mode) {
+    gameMode = mode;
+
+    if (mode === 'normal' || mode === 'heatseeker') {
+        currentBallFriction = NORMAL_BALL_FRICTION;
+    } else if (mode === 'ice') {
+        currentBallFriction = ICE_BALL_FRICTION; 
+    }
+    
+    resetGame(); // Reset everything and call randomizePositions
+    gameState = 'playing';
+    startTimer(); // Start the timer once playing begins
+}
+
+function drawMenu() {
+    ctx.fillStyle = '#181820';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#eee';
+    ctx.font = '90px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText('Pocket League Pro', CANVAS_WIDTH / 2, 150); 
+    
+    let buttonTexts, buttonLabels, titleText;
+    
+    if (gameState === 'menu_difficulty') {
+        titleText = 'Select Difficulty';
+        buttonTexts = ['Freeplay (No AI)', 'Easy', 'Medium', 'Hard'];
+        buttonLabels = ['freeplay', 'easy', 'medium', 'hard'];
+    } else if (gameState === 'menu_mode') {
+        titleText = 'Select Game Mode';
+        buttonTexts = ['Normal', 'Ice (No Friction)', 'Heatseeker'];
+        buttonLabels = ['normal', 'ice', 'heatseeker'];
+    }
+    
+    ctx.font = '45px sans-serif'; 
+    ctx.fillText(titleText, CANVAS_WIDTH / 2, 255); 
+
+    const buttonWidth = 270; 
+    const buttonHeight = 75; 
+    const startY = 300; 
+    const separation = 105; 
+    
+    buttonLabels.forEach((label, index) => {
+        const x = CANVAS_WIDTH / 2 - buttonWidth / 2;
+        const y = startY + index * separation;
+
+        ctx.fillStyle = '#4facfe'; 
+        ctx.fillRect(x, y, buttonWidth, buttonHeight);
+
+        ctx.fillStyle = '#fff'; 
+        ctx.font = '36px sans-serif'; 
+        ctx.fillText(buttonTexts[index], CANVAS_WIDTH / 2, y + 50); 
+    });
+    
+    const DEBUG_BUTTON_WIDTH = 135; 
+    const DEBUG_BUTTON_HEIGHT = 45; 
+    const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15; 
+    const debugY = 15; 
+    const debugText = `DEBUG: ${debugMode ? 'ON' : 'OFF'}`;
+    
+    ctx.fillStyle = debugMode ? '#FF0000' : '#888'; 
+    ctx.fillRect(debugX, debugY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText(debugText, debugX + DEBUG_BUTTON_WIDTH / 2, debugY + 30); 
+}
+
+function handleMenuClick(e) {
+    // Attempt to start music on any click if it hasn't started yet (for mobile/browser restrictions)
+    startBackgroundMusic(); 
+
+    if (gameState !== 'menu_difficulty' && gameState !== 'menu_mode') return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const buttonWidth = 270;
+    const buttonHeight = 75;
+    const startY = 300;
+    const separation = 105; 
+    
+    let buttonLabels;
+
+    if (gameState === 'menu_difficulty') {
+        buttonLabels = ['freeplay', 'easy', 'medium', 'hard'];
+    } else { 
+        buttonLabels = ['normal', 'ice', 'heatseeker'];
+    }
+
+    buttonLabels.forEach((label, index) => {
+        const x = CANVAS_WIDTH / 2 - buttonWidth / 2;
+        const y = startY + index * separation;
+
+        if (mouseX >= x && mouseX <= x + buttonWidth && mouseY >= y && mouseY <= y + buttonHeight) {
+            if (gameState === 'menu_difficulty') {
+                startGame(label);
+            } else {
+                selectGameMode(label);
+            }
+        }
+    });
+    
+    const DEBUG_BUTTON_WIDTH = 135; 
+    const DEBUG_BUTTON_HEIGHT = 45; 
+    const debugX = CANVAS_WIDTH - DEBUG_BUTTON_WIDTH - 15;
+    const debugY = 15;
+    
+    if (mouseX >= debugX && mouseX <= debugX + DEBUG_BUTTON_WIDTH && mouseY >= debugY && mouseY <= debugY + DEBUG_BUTTON_HEIGHT) {
+        debugMode = !debugMode; 
+        drawMenu(); 
+    }
+}
+
+canvas.addEventListener('click', handleMenuClick);
+
+
+function updateAI() {
+    if (!playWithAI) return;
+    
+    const car = aiCar;
+    const ballDist = distance(car, ball);
+    
+    let targetX = ball.x;
+    let targetY = ball.y;
+    
+    let dx_final = targetX - car.x;
+    let dy_final = targetY - car.y;
+    let finalTargetAngle = Math.atan2(dy_final, dx_final);
+    
+    let angleDiff = finalTargetAngle - car.angle;
+    
+    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+    
+    let accel = CAR_ACCEL * AI_AGGRESSION_FACTOR;
+    let turn = 0;
+    let boostActive = false;
+    
+    if (angleDiff > 0) {
+        turn = CAR_TURN_SPEED;
+    } else if (angleDiff < 0) {
+        turn = -CAR_TURN_SPEED;
+    }
+    
+    const adjustedBoostThreshold = AI_BOOST_THRESHOLD * (2 - AI_AGGRESSION_FACTOR); 
+    
+    // --- HEATSEEKER BOOST DELAY LOGIC ---
+    let isTooCloseToCenter = false;
+    
+    if (gameMode === 'heatseeker') {
+        // AI is Orange. Ball on Player (Blue) side is ball.x < CANVAS_WIDTH / 2
+        if (ball.x < CANVAS_WIDTH / 2) {
+            // Check if the ball is still near the center (e.g., within 150 units of the center line)
+            // 150 is the "delay zone" length from the center.
+            if (ball.x > CANVAS_WIDTH / 2 - 150) { 
+                isTooCloseToCenter = true;
+            }
+        }
+    }
+
+    // AI only boosts if distance is greater than threshold AND it's not starting a heatseeker round too close to center.
+    if (ballDist > adjustedBoostThreshold && car.boost > BOOST_DRAIN_RATE && !isTooCloseToCenter) {
+        boostActive = true;
+    }
+    // ----------------------------------------
+    
+    car.vel.x += Math.cos(car.angle) * accel;
+    car.vel.y += Math.sin(car.angle) * accel;
+    car.angle += turn;
+
+    // Base max speed uses the AI Aggression Factor.
+    let currentMax = BASE_MAX_SPEED * AI_AGGRESSION_FACTOR; 
+
+    if (boostActive) {
+        // AI uses the BASE_BOOST_MAX_SPEED directly, same as player.
+        currentMax = BASE_BOOST_MAX_SPEED; 
+        car.boost -= BOOST_DRAIN_RATE; 
+    } else if (car.boost < 100) {
+        car.boost += BOOST_RECHARGE_RATE; 
+    }
+    
+    car.boost = Math.max(0, Math.min(100, car.boost));
+
+    car.vel.x *= FRICTION;
+    car.vel.y *= FRICTION;
+
+    let speed = Math.sqrt(car.vel.x**2 + car.vel.y**2);
+    if (speed > currentMax) {
+        car.vel.x = (car.vel.x / speed) * currentMax;
+        car.vel.y = (car.vel.y / speed) * currentMax;
+    }
+    
+    car.x += car.vel.x;
+    car.y += car.vel.y;
+    
+    if (debugMode) {
+        ctx.fillStyle = '#00FF00'; 
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 15, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+
+function updateCar(car, isPlayer) {
+    let accel = 0;
+    let turn = 0;
+    let boostActive = false;
+    let currentMax = BASE_MAX_SPEED; 
+
+    if (isPlayer) {
+        if (keys.w || keys.ArrowUp) accel = CAR_ACCEL;
+        if (keys.s || keys.ArrowDown) accel = -CAR_ACCEL / 2;
+        
+        if (Math.abs(car.vel.x) > 0.1 || Math.abs(car.vel.y) > 0.1) {
+            if (keys.a || keys.ArrowLeft) turn = -CAR_TURN_SPEED;
+            if (keys.d || keys.ArrowRight) turn = CAR_TURN_SPEED;
+        }
+
+        if (keys[" "] && car.boost > 0) {
+            boostActive = true;
+        }
+    } else {
+        updateAI();
+        return;
+    }
+    
+    car.vel.x += Math.cos(car.angle) * accel;
+    car.vel.y += Math.sin(car.angle) * accel;
+    car.angle += turn;
+
+    if (boostActive) {
+        // Player uses BASE_BOOST_MAX_SPEED
+        currentMax = BASE_BOOST_MAX_SPEED; 
+        car.boost -= BOOST_DRAIN_RATE; 
+    } else if (car.boost < 100) {
+        car.boost += BOOST_RECHARGE_RATE; 
+    }
+    
+    car.boost = Math.max(0, Math.min(100, car.boost));
+
+    car.vel.x *= FRICTION;
+    car.vel.y *= FRICTION;
+
+    let speed = Math.sqrt(car.vel.x**2 + car.vel.y**2);
+    if (speed > currentMax) {
+        car.vel.x = (car.vel.x / speed) * currentMax;
+        car.vel.y = (car.vel.y / speed) * currentMax;
+    }
+    
+    car.x += car.vel.x;
+    car.y += car.vel.y;
+}
+
+function resolveCarCollision(carA, carB) {
+    if (!playWithAI) return; 
+
+    let maxOverlapDist = CAR_MAX_DISTANCE * 2; 
+    let dx = carB.x - carA.x;
+    let dy = carB.y - carA.y;
+    let dist = distance(carA, carB);
+
+    if (dist < maxOverlapDist) {
+        let nx = dx / dist;
+        let ny = dy / dist;
+        let overlap = maxOverlapDist - dist;
+
+        carA.x -= nx * overlap * 0.5;
+        carA.y -= ny * overlap * 0.5;
+        carB.x += nx * overlap * 0.5;
+        carB.y += ny * overlap * 0.5;
+
+        let relVelX = carB.vel.x - carA.vel.x;
+        let relVelY = carB.vel.y - carA.vel.y;
+        let speedAlongNormal = relVelX * nx + relVelY * ny;
+
+        if (speedAlongNormal > 0) return;
+
+        let impulse = (-(1 + CAR_BOUNCE) * speedAlongNormal) / 2;
+        let impulseX = impulse * nx;
+        let impulseY = impulse * ny;
+
+        carA.vel.x -= impulseX;
+        carA.vel.y -= impulseY;
+        carB.vel.x += impulseX;
+        carB.vel.y += impulseY;
+    }
+}
+
+function resolveCarBallCollision(car, ballObj) {
+    let dx = ballObj.x - car.x;
+    let dy = ballObj.y - car.y;
+    
+    const cos = Math.cos(-car.angle);
+    const sin = Math.sin(-car.angle);
+    let localX = dx * cos - dy * sin;
+    let localY = dx * sin + dy * cos;
+
+    let closestX = Math.max(-CAR_HALF_WIDTH, Math.min(CAR_HALF_WIDTH, localX));
+    let closestY = Math.max(-CAR_HALF_HEIGHT, Math.min(CAR_HALF_HEIGHT, localY));
+    
+    let distX = localX - closestX;
+    let distY = localY - closestY;
+    
+    let distSq = distX * distX + distY * distY;
+    
+    if (distSq < ballObj.radius * ballObj.radius) {
+        let dist = Math.sqrt(distSq);
+        let overlap = ballObj.radius - dist;
+        
+        if (dist === 0) {
+            distX = 1; distY = 0; 
+            dist = 1;
+        }
+
+        let nx_local = distX / dist;
+        let ny_local = distY / dist;
+
+        let nx_world = (nx_local * Math.cos(car.angle)) - (ny_local * Math.sin(car.angle));
+        let ny_world = (nx_local * Math.sin(car.angle)) + (ny_local * Math.cos(car.angle));
+        
+        ballObj.x += nx_world * overlap;
+        ballObj.y += ny_world * overlap;
+
+        // --- HEATSEEKER TARGET SWITCH ---
+        if (gameMode === 'heatseeker' && gameState === 'playing') {
+            ballHasBeenHit = true; 
+            if (car.id === 'blue') {
+                heatseekerTargetCar = 'orange'; 
+            } else if (car.id === 'orange') {
+                heatseekerTargetCar = 'blue'; 
+            }
+        }
+        // --------------------------------
+
+        let relVelX = ballObj.vel.x - car.vel.x;
+        let relVelY = ballObj.vel.y - car.vel.y;
+
+        let speedAlongNormal = relVelX * nx_world + relVelY * ny_world;
+
+        if (speedAlongNormal < 0) {
+            let impulseStrength = -speedAlongNormal * 1.8; 
+            
+            ballObj.vel.x += nx_world * impulseStrength;
+            ballObj.vel.y += ny_world * impulseStrength;
+
+            car.vel.x -= nx_world * impulseStrength * 0.4;
+            car.vel.y -= ny_world * impulseStrength * 0.4;
+        }
+    }
+}
+
+function getCarCorners(car) {
+    const hw = CAR_HALF_WIDTH;
+    const hh = CAR_HALF_HEIGHT;
+    const cosA = Math.cos(car.angle);
+    const sinA = Math.sin(car.angle);
+
+    const localCorners = [
+        { x: hw, y: hh },   
+        { x: -hw, y: hh },  
+        { x: -hw, y: -hh }, 
+        { x: hw, y: -hh }   
+    ];
+
+    return localCorners.map(p => ({
+        x: car.x + p.x * cosA - p.y * sinA,
+        y: car.y + p.x * sinA + p.y * cosA
+    }));
+}
+
+function checkWallCollisionRect(car, bounceFactor) {
+    const corners = getCarCorners(car);
+    
+    corners.forEach(p => {
+        let correctionX = 0;
+        let correctionY = 0;
+        
+        // Use a safe zone for straight wall collision detection that avoids corners
+        const isOutsideCornerX = p.x > CORNER_RADIUS && p.x < CANVAS_WIDTH - CORNER_RADIUS;
+        const isOutsideCornerY = p.y > CORNER_RADIUS && p.y < CANVAS_HEIGHT - CORNER_RADIUS;
+
+        // Check top/bottom boundaries (straight sections)
+        if (isOutsideCornerX) {
+            if (p.y < 0) correctionY = -p.y;
+            else if (p.y > CANVAS_HEIGHT) correctionY = CANVAS_HEIGHT - p.y;
+        }
+
+        // Check left/right boundaries (straight sections, excluding goal opening area)
+        const isWithinGoalY = car.y > GOAL_START_Y && car.y < GOAL_START_Y + GOAL_WIDTH;
+        if (isOutsideCornerY && !isWithinGoalY) {
+             if (p.x < 0) correctionX = -p.x;
+             else if (p.x > CANVAS_WIDTH) correctionX = CANVAS_WIDTH - p.x;
+        }
+
+        if (Math.abs(correctionX) > 0 || Math.abs(correctionY) > 0) {
+            car.x += correctionX;
+            car.y += correctionY;
+            
+            if (Math.abs(correctionX) > 0) car.vel.x *= -bounceFactor;
+            if (Math.abs(correctionY) > 0) car.vel.y *= -bounceFactor;
+        }
+    });
+
+    // Corner Circle Collision Check (Re-enabled)
+    if (CORNER_RADIUS > 0) {
+        const cornerPoints = [
+            { x: CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }
+        ];
+
+        cornerPoints.forEach(corner => {
+            const dist = distance(corner, car);
+            if (dist < CORNER_RADIUS + CAR_MAX_DISTANCE) {
+                const overlap = (CORNER_RADIUS + CAR_MAX_DISTANCE) - dist;
+                const nx_c = (car.x - corner.x) / dist;
+                const ny_c = (car.y - corner.y) / dist;
+
+                car.x += nx_c * overlap;
+                car.y += ny_c * overlap;
+
+                const speedAlongNormal = car.vel.x * nx_c + car.vel.y * ny_c;
+                if (speedAlongNormal < 0) {
+                    const impulse = (-(1 + bounceFactor) * speedAlongNormal);
+                    car.vel.x += impulse * nx_c;
+                    car.vel.y += impulse * ny_c;
+                }
+            }
+        });
+    }
+}
+
+function checkWallCollisionCircle(object, bounceFactor) {
+    let objRadius = object.radius;
+    let isWithinGoalY = object.y > GOAL_START_Y + objRadius && object.y < GOAL_START_Y + GOAL_WIDTH - objRadius;
+    
+    // 1. Top/Bottom Walls (Straight sections)
+    if (object.x > CORNER_RADIUS && object.x < CANVAS_WIDTH - CORNER_RADIUS) {
+        if (object.y < objRadius) {
+            object.y = objRadius;
+            object.vel.y *= -bounceFactor;
+        } else if (object.y > CANVAS_HEIGHT - objRadius) {
+            object.y = CANVAS_HEIGHT - objRadius;
+            object.vel.y *= -bounceFactor;
+        }
+    }
+
+    // 2. Left/Right Walls (Solid walls behind the goals)
+    if (!isWithinGoalY && object.y > CORNER_RADIUS && object.y < CANVAS_HEIGHT - CORNER_RADIUS) { 
+        if (object.x < objRadius) {
+            object.x = objRadius;
+            object.vel.x *= -bounceFactor;
+        } 
+        else if (object.x > CANVAS_WIDTH - objRadius) {
+            object.x = CANVAS_WIDTH - objRadius;
+            object.vel.x *= -bounceFactor;
+        }
+    }
+
+    // 3. Corner Collision Logic (Re-enabled)
+    if (CORNER_RADIUS > 0) {
+        const corners = [
+            { x: CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }
+        ];
+
+        corners.forEach(corner => {
+            let dx = object.x - corner.x;
+            let dy = object.y - corner.y;
+            let dist = distance(corner, object);
+
+            if (dist < CORNER_RADIUS + objRadius) {
+                let nx = dx / dist; 
+                let ny = dy / dist; 
+
+                object.x = corner.x + nx * (CORNER_RADIUS + objRadius);
+                object.y = corner.y + ny * (CORNER_RADIUS + objRadius);
+
+                let speedAlongNormal = object.vel.x * nx + object.vel.y * ny;
+
+                if (speedAlongNormal < 0) {
+                    let impulse = (-(1 + bounceFactor) * speedAlongNormal);
+                    
+                    object.vel.x += impulse * nx;
+                    object.vel.y += impulse * ny;
+                }
+            }
+        });
+    }
+}
+
+
+function update() {
+    updateCar(playerCar, true);
+    if (playWithAI) updateCar(aiCar, false);
+
+    ball.vel.x *= currentBallFriction;
+    ball.vel.y *= currentBallFriction;
+    
+    // --- HEATSEEKER LOGIC ---
+    if (gameMode === 'heatseeker' && ballHasBeenHit) {
+        const targetGoalX = (heatseekerTargetCar === 'blue') ? 0 : CANVAS_WIDTH;
+        const targetGoalY = GOAL_Y;
+        
+        let dx = targetGoalX - ball.x;
+        let dy = targetGoalY - ball.y;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > ball.radius) {
+            let nx = dx / dist;
+            let ny = dy / dist;
+            
+            const currentSeekAccel = HEATSEEKER_BASE_ACCEL; 
+
+            ball.vel.x += nx * currentSeekAccel;
+            ball.vel.y += ny * currentSeekAccel;
+            
+            let speed = Math.sqrt(ball.vel.x**2 + ball.vel.y**2);
+            if (speed > MAX_SEEKING_SPEED) {
+                 ball.vel.x = (ball.vel.x / speed) * MAX_SEEKING_SPEED;
+                 ball.vel.y = (ball.vel.y / speed) * MAX_SEEKING_SPEED;
+            }
+        }
+    }
+    // -------------------------
+
+    ball.x += ball.vel.x;
+    ball.y += ball.vel.y;
+
+    if (playWithAI) resolveCarCollision(playerCar, aiCar); 
+
+    cars.forEach(car => checkWallCollisionRect(car, CAR_WALL_RESPONSE)); 
+    checkWallCollisionCircle(ball, WALL_BOUNCE); 
+
+    // Car/Ball collision
+    cars.forEach(car => {
+        resolveCarBallCollision(car, ball); 
+    });
+    
+    // --- GOAL CHECK (Goal Scoring and Replay Trigger) ---
+    let goalScored = false;
+    let scorer = 'none';
+    let newScoreBlue = scores.blue; // Use temporary scores for goal check
+    let newScoreOrange = scores.orange;
+
+    if (ball.x < ball.radius) { // Ball entered Blue goal (Orange scored)
+        if (ball.y > GOAL_START_Y && ball.y < GOAL_START_Y + GOAL_WIDTH) {
+            newScoreOrange++; // Increment the new score
+            scorer = 'orange'; 
+            goalScored = true;
+        } 
+    } else if (ball.x > CANVAS_WIDTH - ball.radius) { // Ball entered Orange goal (Blue scored)
+        if (ball.y > GOAL_START_Y && ball.y < GOAL_START_Y + GOAL_WIDTH) {
+            newScoreBlue++; // Increment the new score
+            scorer = 'blue'; 
+            goalScored = true;
+        } 
+    }
+
+    if (goalScored) {
+        // --- PLAY GOAL SOUND ---
+        playGoalSound();
+        // -----------------------
+        
+        lastGoalScoredBy = scorer;
+        postGoalScores.blue = newScoreBlue; // SAVE THE FINAL SCORE for display
+        postGoalScores.orange = newScoreOrange;
+
+        // 1. Snapshot the history and prepare for playback
+        currentReplayData = [...gameHistory];
+        replayIndex = 0;
+        
+        // 2. Switch state to replay
+        gameState = 'replay';
+        
+        // 3. Stop movement in the main game loop
+        ball.vel.x = 0; ball.vel.y = 0;
+        playerCar.vel.x = 0; playerCar.vel.y = 0;
+        if (playWithAI) { aiCar.vel.x = 0; aiCar.vel.y = 0; }
+    }
+}
+
+/**
+ * Records the current state of the game objects into the history buffer.
+ */
+function recordState() {
+    const currentState = {
+        ball: { x: ball.x, y: ball.y, vel: { x: ball.vel.x, y: ball.vel.y }, radius: ball.radius, color: ball.color },
+        playerCar: { x: playerCar.x, y: playerCar.y, angle: playerCar.angle, vel: { x: playerCar.vel.x, y: playerCar.vel.y }, color: playerCar.color, boost: playerCar.boost, id: playerCar.id },
+        aiCar: playWithAI ? { x: aiCar.x, y: aiCar.y, angle: aiCar.angle, vel: { x: aiCar.vel.x, y: aiCar.vel.y }, color: aiCar.color, boost: aiCar.boost, id: aiCar.id } : null,
+        scores: { blue: scores.blue, orange: scores.orange } 
+    };
+
+    gameHistory.push(currentState);
+
+    // Maintain the circular buffer size
+    if (gameHistory.length > MAX_HISTORY_FRAMES) {
+        gameHistory.shift(); 
+    }
+}
+
+/**
+ * Handles the playback logic when gameState is 'replay'.
+ */
+function replayLoop() {
+    // --- NEW: SKIP REPLAY LOGIC ---
+    if (keys.f) {
+        // Set replay index to the end
+        replayIndex = currentReplayData.length; 
+        keys.f = false; // Consume the keypress
+    }
+    // ----------------------------
+
+    if (replayIndex >= currentReplayData.length) {
+        // Replay finished or skipped
+        
+        // Update the actual score only *after* the replay finishes
+        scores.blue = postGoalScores.blue;
+        scores.orange = postGoalScores.orange;
+        
+        randomizePositions();
+        gameState = 'playing';
+        gameHistory = []; // Clear history for the new game
+        return;
+    }
+
+    const state = currentReplayData[replayIndex];
+    
+    // Restore states to temporary replay objects
+    Object.assign(replayBall, state.ball);
+    Object.assign(replayPlayerCar, state.playerCar);
+    
+    if (playWithAI && state.aiCar) {
+        Object.assign(replayAiCar, state.aiCar);
+    } else {
+        replayAiCar = null;
+    }
+    
+    // TEMPORARILY display the pre-goal score during the replay
+    scores.blue = state.scores.blue;
+    scores.orange = state.scores.orange;
+
+    replayIndex++;
+    
+    // If we are at the very end of the replay, switch to displaying the post-goal score
+    if (replayIndex === currentReplayData.length) {
+        scores.blue = postGoalScores.blue;
+        scores.orange = postGoalScores.orange;
+    }
+}
+
+
+/**
+ * Draws the car and its boost bar.
+ * @param {object} car - The car object (live or replay snapshot).
+ * @param {boolean} isReplay - True if drawing from a replay snapshot.
+ */
+function drawCar(car, isReplay = false) {
+    // Determine which car object to use for drawing: the live one, or the temporary replay one.
+    const carToDraw = isReplay ? car : (car.id === 'blue' ? playerCar : aiCar);
+    
+    if (!carToDraw || (carToDraw.id === 'orange' && !playWithAI && !isReplay && carToDraw.x === undefined)) return; 
+
+    const CAR_DRAW_WIDTH = CAR_WIDTH; 
+    const CAR_DRAW_HEIGHT = CAR_HEIGHT; 
+
+    // --- 1. DRAW CAR BODY AND THRUSTER ---
+    ctx.save();
+    ctx.translate(carToDraw.x, carToDraw.y);
+    ctx.rotate(carToDraw.angle);
+
+    ctx.globalAlpha = isReplay ? 0.8 : 1.0; 
+    
+    ctx.fillStyle = carToDraw.color;
+    ctx.beginPath();
+    ctx.rect(-CAR_DRAW_WIDTH / 2, -CAR_DRAW_HEIGHT / 2, CAR_DRAW_WIDTH, CAR_DRAW_HEIGHT);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#222';
+    ctx.fillRect(7.5, -15, 22.5, 30); 
+    
+    // Draw Boost Fire (Only in playing mode)
+    if (!isReplay) {
+        let isBoosting = false;
+        
+        if (carToDraw.id === 'blue' && keys[" "]) {
+            isBoosting = true;
+        } else if (carToDraw.id === 'orange' && playWithAI) {
+            // Check if the AI is attempting to exceed base speed (i.e., boosting)
+            let speedCheck = Math.sqrt(carToDraw.vel.x**2 + carToDraw.vel.y**2);
+            if (speedCheck > BASE_MAX_SPEED * AI_AGGRESSION_FACTOR + 1.5) isBoosting = true; 
+        }
+        
+        if (isBoosting && carToDraw.boost > 0.1) {
+            ctx.fillStyle = '#ffaa00';
+            ctx.beginPath();
+            ctx.moveTo(-CAR_DRAW_WIDTH / 2, -7.5); 
+            ctx.lineTo(-CAR_DRAW_WIDTH / 2 - 25 - Math.random() * 15, 0); 
+            ctx.lineTo(-CAR_DRAW_WIDTH / 2, 7.5); 
+            ctx.fill();
+        }
+    }
+
+    ctx.restore();
+    ctx.globalAlpha = 1.0; 
+
+    // --- 2. DRAW BOOST BAR (OUTSIDE THE ROTATED CONTEXT) ---
+    
+    const BAR_WIDTH = 60; 
+    const BAR_HEIGHT = 9; 
+    const BAR_Y_OFFSET = 37.5; 
+
+    if (carToDraw.x !== undefined) { 
+        // Background bar
+        ctx.fillStyle = '#333';
+        ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH, BAR_HEIGHT);
+        
+        // Boost level bar
+        ctx.fillStyle = '#ffaa00'; // Yellow/Orange color for boost
+        ctx.fillRect(carToDraw.x - BAR_WIDTH / 2, carToDraw.y + BAR_Y_OFFSET, BAR_WIDTH * (carToDraw.boost / 100), BAR_HEIGHT);
+    }
+    
+    // 🟣 Draw Car Hitbox if Debug Mode is ON
+    if (debugMode) {
+        ctx.save();
+        ctx.translate(carToDraw.x, carToDraw.y);
+        ctx.rotate(carToDraw.angle);
+        ctx.beginPath();
+        ctx.rect(-CAR_HALF_WIDTH, -CAR_HALF_HEIGHT, CAR_WIDTH, CAR_HEIGHT);
+        ctx.strokeStyle = '#FF00FF'; 
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+        ctx.restore();
+        
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+function drawGame() {
+    ctx.fillStyle = '#2a2a35';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // --- DRAW FIELD BOUNDARIES ---
+    ctx.strokeStyle = '#3a3a45';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    
+    // Top border, corners, etc. (Boundary drawing logic simplified for brevity)
+    ctx.moveTo(CORNER_RADIUS, 0);
+    ctx.lineTo(CANVAS_WIDTH - CORNER_RADIUS, 0);
+    ctx.arcTo(CANVAS_WIDTH, 0, CANVAS_WIDTH, CORNER_RADIUS, CORNER_RADIUS);
+    ctx.lineTo(CANVAS_WIDTH, GOAL_START_Y);
+    ctx.moveTo(CANVAS_WIDTH, GOAL_START_Y + GOAL_WIDTH);
+    ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT - CORNER_RADIUS);
+    ctx.arcTo(CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH - CORNER_RADIUS, CANVAS_HEIGHT, CORNER_RADIUS);
+    ctx.lineTo(CORNER_RADIUS, CANVAS_HEIGHT);
+    ctx.arcTo(0, CANVAS_HEIGHT, 0, CANVAS_HEIGHT - CORNER_RADIUS, CORNER_RADIUS);
+    ctx.lineTo(0, GOAL_START_Y + GOAL_WIDTH);
+    ctx.moveTo(0, GOAL_START_Y);
+    ctx.lineTo(0, CORNER_RADIUS);
+    ctx.arcTo(0, 0, CORNER_RADIUS, 0, CORNER_RADIUS);
+    
+    ctx.stroke();
+
+    // Center Circle/Line/Goals 
+    ctx.beginPath();
+    ctx.arc(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, 105, 0, Math.PI * 2); 
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(CANVAS_WIDTH / 2, 0);
+    ctx.lineTo(CANVAS_WIDTH / 2, CANVAS_HEIGHT);
+    ctx.stroke();
+    
+    const GOAL_DEPTH = 90; 
+    ctx.fillStyle = '#4facfe33';
+    ctx.fillRect(0, GOAL_START_Y, GOAL_DEPTH, GOAL_WIDTH);
+    ctx.fillStyle = '#ff9a4433';
+    ctx.fillRect(CANVAS_WIDTH - GOAL_DEPTH, GOAL_START_Y, GOAL_DEPTH, GOAL_WIDTH);
+
+    
+    // --- DETERMINE OBJECTS TO DRAW ---
+    let ballToDraw = (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over') ? ball : replayBall;
+    
+    // Car Drawing (Pass the temporary replay objects when in replay mode)
+    if (gameState === 'replay') {
+        drawCar(replayPlayerCar, true);
+        if (playWithAI && replayAiCar) drawCar(replayAiCar, true);
+    } else if (gameState === 'playing' || gameState === 'menu_difficulty' || gameState === 'menu_mode' || gameState === 'game_over') {
+        // Draw live cars when playing or on kickoff screen or game over
+        drawCar(playerCar, false);
+        if (playWithAI) drawCar(aiCar, false);
+    }
+
+    // Ball Drawing (Only draw if the ball object has been initialized)
+    if (ballToDraw.x !== undefined) {
+        ctx.beginPath();
+        ctx.arc(ballToDraw.x, ballToDraw.y, ballToDraw.radius, 0, Math.PI * 2);
+        ctx.fillStyle = ballToDraw.color;
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        if (debugMode) {
+            ctx.beginPath();
+            ctx.arc(ballToDraw.x, ballToDraw.y, ballToDraw.radius, 0, Math.PI * 2);
+            ctx.strokeStyle = '#FF00FF'; 
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.5;
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+        }
+    }
+    
+    // Display "REPLAY" or "GAME OVER" text
+    if (gameState === 'replay') {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '120px sans-serif'; 
+        ctx.textAlign = 'center';
+        ctx.fillText('REPLAY', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '30px sans-serif'; 
+        ctx.fillText('(Press F to Skip)', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+    } else if (gameState === 'game_over') {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '120px sans-serif'; 
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+        
+        let winnerText = 'TIE!';
+        if (scores.blue > scores.orange) {
+            winnerText = 'BLUE WINS!';
+        } else if (scores.orange > scores.blue) {
+            winnerText = 'ORANGE WINS!';
+        }
+        
+        ctx.font = '60px sans-serif'; 
+        ctx.fillText(winnerText, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+        ctx.font = '30px sans-serif'; 
+        ctx.fillText('(Press M for Menu)', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 120);
+    }
+
+    // --- SCORE & TIME DISPLAY ---
+    
+    // Blue Score
+    ctx.fillStyle = '#4facfe';
+    ctx.font = '60px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText(scores.blue, CANVAS_WIDTH / 2 - 200, 67.5); 
+    
+    // Time Display
+    ctx.fillStyle = '#eee';
+    ctx.font = '72px sans-serif'; 
+    ctx.fillText(formatTime(timeRemaining), CANVAS_WIDTH / 2, 67.5); 
+    
+    // Orange Score
+    ctx.fillStyle = '#ff9a44';
+    ctx.font = '60px sans-serif'; 
+    ctx.fillText(scores.orange, CANVAS_WIDTH / 2 + 200, 67.5); 
+    
+    // Info Text
+    ctx.fillStyle = '#888';
+    ctx.font = '21px sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.fillText(`Mode: ${gameMode.toUpperCase()} | WASD/Arrows to Drive | SPACE to Boost | F to Skip Replay | M to Menu`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 15); 
+}
+
+function loop() {
+    if (gameState === 'menu_difficulty' || gameState === 'menu_mode') {
+        drawMenu();
+    } else if (gameState === 'playing') {
+        update();
+        recordState();
+        drawGame();
+    } else if (gameState === 'replay') {
+        replayLoop();
+        drawGame();
+    } else if (gameState === 'game_over') {
+        drawGame(); // Draws the final score and game over screen
+    }
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script></body></html>
