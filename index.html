@@ -126,6 +126,13 @@ const MAX_SEEKING_SPEED = 12;
 const HS_SPAWN_X_FORWARD = 360; 
 const HS_SPAWN_Y_INWARD = 120; 
 
+// --- NEW DYNAMIC HEATSEEKER VARIABLES (For speed-up on hit) ---
+let currentHeatseekerAccel = HEATSEEKER_BASE_ACCEL;
+let currentMaxSeekingSpeed = MAX_SEEKING_SPEED;
+const MAX_SEEKING_ACCEL_CAP = 0.4; // Cap the ball acceleration
+const MAX_SEEKING_SPEED_CAP = 50;  // Cap the ball max speed
+// -------------------------------------------------------------
+
 // --- REPLAY HISTORY CONSTANTS & ARRAY ---
 const FRAMES_PER_SECOND = 60;
 const REPLAY_DURATION_SECONDS = 10; 
@@ -246,6 +253,11 @@ function randomizePositions() {
     const midY = CANVAS_HEIGHT / 2;
     const P = SAFE_SPAWN_PADDING; 
     let ballX, ballY;
+    
+    // --- RESET DYNAMIC HEATSEEKER SPEED ON KICKOFF ---
+    currentHeatseekerAccel = HEATSEEKER_BASE_ACCEL;
+    currentMaxSeekingSpeed = MAX_SEEKING_SPEED;
+    // -------------------------------------------------
 
     const spawnPoints = [
         { blueX: halfWidth / 2 - 45, blueY: midY, orangeX: CANVAS_WIDTH - (halfWidth / 2) + 45, orangeY: midY }, 
@@ -762,7 +774,6 @@ function handleMenuClick(e) {
 
 canvas.addEventListener('click', handleMenuClick);
 
-
 function updateAI() {
     // AI is only updated if in 1P mode AND we have an AI opponent
     if (!playWithAI || isTwoPlayerMode) return;
@@ -1001,6 +1012,11 @@ function resolveCarBallCollision(car, ballObj) {
             } else if (car.id === 'orange') {
                 heatseekerTargetCar = 'blue'; 
             }
+            
+            // --- NEW: Increase Heatseeker Speed/Accel on hit ---
+            currentHeatseekerAccel = Math.min(MAX_SEEKING_ACCEL_CAP, currentHeatseekerAccel + 0.007);
+            currentMaxSeekingSpeed = Math.min(MAX_SEEKING_SPEED_CAP, currentMaxSeekingSpeed + 0.75);
+            // ----------------------------------------------------
         }
 
         let relVelX = ballObj.vel.x - car.vel.x;
@@ -1165,6 +1181,154 @@ function checkWallCollisionCircle(object, bounceFactor) {
     }
 }
 
+// --- NEW DEBUG FUNCTION: BALL PATH PREDICTION ---
+
+function drawBallPath(ctx, ballObj, durationFrames) {
+    // Only draw if the ball has significant speed
+    const currentBallSpeed = Math.sqrt(ballObj.vel.x**2 + ballObj.vel.y**2);
+    if (currentBallSpeed < 0.5) return; 
+
+    const PREDICTION_STEP = 1; 
+    const PREDICTION_LENGTH = durationFrames; 
+    
+    // Create a temporary, disposable ball object for simulation
+    let tempBall = { 
+        x: ballObj.x, 
+        y: ballObj.y, 
+        vel: { x: ballObj.vel.x, y: ballObj.vel.y }, 
+        radius: ballObj.radius 
+    };
+    
+    ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)'; // Semi-transparent yellow
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 10]); // Dashed line
+
+    ctx.beginPath();
+    ctx.moveTo(tempBall.x, tempBall.y);
+
+    for (let i = 0; i < PREDICTION_LENGTH; i += PREDICTION_STEP) {
+        
+        // 1. Apply Friction/Heatseeker/Movement 
+        tempBall.vel.x *= currentBallFriction;
+        tempBall.vel.y *= currentBallFriction;
+        
+        // Heatseeker logic for prediction
+        if (gameMode === 'heatseeker' && ballHasBeenHit) {
+            const targetGoalX = (heatseekerTargetCar === 'blue') ? 0 : CANVAS_WIDTH;
+            const targetGoalY = GOAL_Y;
+            
+            let dx = targetGoalX - tempBall.x;
+            let dy = targetGoalY - tempBall.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > tempBall.radius) {
+                let nx = dx / dist;
+                let ny = dy / dist;
+                
+                // --- MODIFIED: Use dynamic acceleration variables ---
+                const currentSeekAccel = currentHeatseekerAccel; 
+
+                tempBall.vel.x += nx * currentSeekAccel;
+                tempBall.vel.y += ny * currentSeekAccel;
+                
+                let speed = Math.sqrt(tempBall.vel.x**2 + tempBall.vel.y**2);
+                if (speed > currentMaxSeekingSpeed) { // --- MODIFIED: Use dynamic max speed variable ---
+                     tempBall.vel.x = (tempBall.vel.x / speed) * currentMaxSeekingSpeed;
+                     tempBall.vel.y = (tempBall.vel.y / speed) * currentMaxSeekingSpeed;
+                }
+            }
+        }
+
+        tempBall.x += tempBall.vel.x * PREDICTION_STEP;
+        tempBall.y += tempBall.vel.y * PREDICTION_STEP;
+        
+        // 2. Check and Resolve Wall Collisions
+        let objRadius = tempBall.radius;
+        let bounceFactor = gameSettings.WALL_BOUNCE;
+        let hasBounced = false;
+        
+        // Top/Bottom Walls
+        if (tempBall.x > CORNER_RADIUS && tempBall.x < CANVAS_WIDTH - CORNER_RADIUS) {
+            if (tempBall.y < objRadius) {
+                tempBall.y = objRadius;
+                tempBall.vel.y *= -bounceFactor;
+                hasBounced = true;
+            } else if (tempBall.y > CANVAS_HEIGHT - objRadius) {
+                tempBall.y = CANVAS_HEIGHT - objRadius;
+                tempBall.vel.y *= -bounceFactor;
+                hasBounced = true;
+            }
+        }
+
+        // Left/Right Walls
+        let isWithinGoalY = tempBall.y > GOAL_START_Y + objRadius && tempBall.y < GOAL_START_Y + GOAL_WIDTH - objRadius;
+        if (!isWithinGoalY && tempBall.y > CORNER_RADIUS && tempBall.y < CANVAS_HEIGHT - CORNER_RADIUS) { 
+            if (tempBall.x < objRadius) {
+                tempBall.x = objRadius;
+                tempBall.vel.x *= -bounceFactor;
+                hasBounced = true;
+            } 
+            else if (tempBall.x > CANVAS_WIDTH - objRadius) {
+                tempBall.x = CANVAS_WIDTH - objRadius;
+                tempBall.vel.x *= -bounceFactor;
+                hasBounced = true;
+            }
+        }
+        
+        // Corner Collision Logic
+        const corners = [
+            { x: CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CORNER_RADIUS }, 
+            { x: CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }, 
+            { x: CANVAS_WIDTH - CORNER_RADIUS, y: CANVAS_HEIGHT - CORNER_RADIUS }
+        ];
+
+        corners.forEach(corner => {
+            let dx = tempBall.x - corner.x;
+            let dy = tempBall.y - corner.y;
+            let dist = distance(corner, tempBall);
+
+            if (dist < CORNER_RADIUS + objRadius) {
+                
+                // FIX 1: Prevent division by zero if ball is exactly centered on a corner point
+                if (dist === 0) {
+                    tempBall.x += 1;
+                    tempBall.y += 1;
+                    dist = distance(corner, tempBall); 
+                }
+
+                let nx = dx / dist; 
+                let ny = dy / dist; 
+
+                // FIX 2: Use tempBall instead of the global 'object' variable
+                tempBall.x = corner.x + nx * (CORNER_RADIUS + objRadius); 
+                tempBall.y = corner.y + ny * (CORNER_RADIUS + objRadius);
+
+                let speedAlongNormal = tempBall.vel.x * nx + tempBall.vel.y * ny;
+
+                if (speedAlongNormal < 0) {
+                    // Ball bounce factor is controlled by Modded Settings
+                    let impulse = (-(1 + bounceFactor) * speedAlongNormal);
+                    
+                    tempBall.vel.x += impulse * nx;
+                    tempBall.vel.y += impulse * ny;
+                    hasBounced = true;
+                }
+            }
+        });
+
+        // 3. Draw Path Segment
+        if (i % 5 === 0) { 
+            ctx.lineTo(tempBall.x, tempBall.y);
+        }
+    }
+    
+    ctx.stroke();
+    ctx.setLineDash([]); // Reset line dash for other drawings
+}
+
+// ... (rest of the code - same as before) ...
+
 
 function update() {
     updateCar(playerCar, true);
@@ -1186,15 +1350,16 @@ function update() {
             let nx = dx / dist;
             let ny = dy / dist;
             
-            const currentSeekAccel = HEATSEEKER_BASE_ACCEL; 
+            // --- MODIFIED: Use dynamic acceleration variable ---
+            const currentSeekAccel = currentHeatseekerAccel; 
 
             ball.vel.x += nx * currentSeekAccel;
             ball.vel.y += ny * currentSeekAccel;
             
             let speed = Math.sqrt(ball.vel.x**2 + ball.vel.y**2);
-            if (speed > MAX_SEEKING_SPEED) {
-                 ball.vel.x = (ball.vel.x / speed) * MAX_SEEKING_SPEED;
-                 ball.vel.y = (ball.vel.y / speed) * MAX_SEEKING_SPEED;
+            if (speed > currentMaxSeekingSpeed) { // --- MODIFIED: Use dynamic max speed variable ---
+                 ball.vel.x = (ball.vel.x / speed) * currentMaxSeekingSpeed;
+                 ball.vel.y = (ball.vel.y / speed) * currentMaxSeekingSpeed;
             }
         }
     }
@@ -1352,7 +1517,7 @@ function drawCar(car, isReplay = false) {
             if (speedCheck > gameSettings.Car_max_speed * AI_AGGRESSION_FACTOR + 1.5) isBoosting = true; 
         }
         
-        if (isBoosting && carToDraw.boost > gameSettings.BOOST_DRAIN_RATE) { // Use new setting for check
+        if (isBoosting && carToDraw.boost >= gameSettings.BOOST_DRAIN_RATE) { // Use new setting for check
             ctx.fillStyle = '#ffaa00';
             ctx.beginPath();
             ctx.moveTo(-CAR_DRAW_WIDTH / 2, -7.5); 
@@ -1438,6 +1603,26 @@ function drawGame() {
     ctx.fillRect(0, GOAL_START_Y, GOAL_DEPTH, GOAL_WIDTH);
     ctx.fillStyle = '#ff9a4433';
     ctx.fillRect(CANVAS_WIDTH - GOAL_DEPTH, GOAL_START_Y, GOAL_DEPTH, GOAL_WIDTH);
+
+
+    // --- NEW DEBUG IMPLEMENTATION ---
+    if (debugMode && gameState === 'playing') {
+        // 1. Draw Ball Path (2 seconds / 120 frames)
+        drawBallPath(ctx, ball, 120);
+
+        // 2. Draw AI Target Path (Line from AI to Ball)
+        if (playWithAI && !isTwoPlayerMode) {
+            ctx.strokeStyle = 'rgba(255, 0, 255, 0.5)'; // Magenta/Purple
+            ctx.lineWidth = 3;
+            ctx.setLineDash([10, 5]); // Different dashed pattern for AI path
+            ctx.beginPath();
+            ctx.moveTo(aiCar.x, aiCar.y);
+            ctx.lineTo(ball.x, ball.y);
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset line dash
+        }
+    }
+    // --- END DEBUG PATH DRAWING ---
 
     
     let ballToDraw = (gameState === 'playing' || gameState === 'game_over') ? ball : replayBall;
@@ -1548,9 +1733,67 @@ function drawGame() {
         infoText = `Mode: ${gameMode.toUpperCase()} (Difficulty: ${selectedDifficulty.toUpperCase()}) | P1: WASD/Arrows to Drive | SPACE to Boost | M to Menu`;
     }
     ctx.fillText(infoText, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 15); 
+
+
+    // --- DEBUG TEXT DISPLAY (TOP LEFT) ---
+    if (debugMode) {
+        // 1. Calculate Ball Speed
+        const ballSpeed = Math.sqrt(ball.vel.x**2 + ball.vel.y**2).toFixed(2);
+        
+        ctx.save();
+        ctx.fillStyle = '#FFFF00'; // Yellow
+        ctx.font = '20px monospace'; 
+        ctx.textAlign = 'left';
+        
+        let debugY = 20; 
+        const LINE_HEIGHT = 25;
+
+        // Display FPS
+        ctx.fillText(`FPS: ${fps}`, 10, debugY); 
+        debugY += LINE_HEIGHT;
+        
+        // Display Ball Speed
+        ctx.fillText(`Ball Speed: ${ballSpeed}`, 10, debugY); 
+        debugY += LINE_HEIGHT;
+        
+        // Display Game Mode
+        ctx.fillText(`Mode: ${gameMode.toUpperCase()}`, 10, debugY); 
+        debugY += LINE_HEIGHT;
+
+        // Display Difficulty (only if not 2P mode)
+        if (!isTwoPlayerMode) {
+            ctx.fillText(`Difficulty: ${selectedDifficulty.toUpperCase()} (Aggro: ${AI_AGGRESSION_FACTOR.toFixed(1)})`, 10, debugY); 
+        } else {
+             ctx.fillText(`Difficulty: 2 PLAYER MODE`, 10, debugY); 
+        }
+        
+        ctx.restore();
+    }
+    // --- END DEBUG TEXT DISPLAY ---
 }
 
-function loop() {
+
+// --- NEW FPS VARIABLES ---
+let lastFrameTimeMs = 0;
+let fps = 60; // Default estimate
+let frameCounter = 0;
+const fpsUpdateInterval = 500; // Update every 500ms
+let lastFpsUpdate = 0; 
+// --- END FPS VARIABLES ---
+
+
+// MODIFIED loop function to calculate FPS
+function loop(timestamp) {
+    // FPS Calculation (only run if timestamp is available and we're in game)
+    if (timestamp) {
+        if (timestamp > lastFpsUpdate + fpsUpdateInterval) {
+            fps = Math.round(frameCounter * 1000 / (timestamp - lastFpsUpdate));
+            lastFpsUpdate = timestamp;
+            frameCounter = 0;
+        }
+        frameCounter++;
+    }
+
     // NEW: 2-Player Skip Logic: Immediately transition to mode selection if 2P is on.
     if (gameState === 'menu_difficulty' && isTwoPlayerMode) {
         gameState = 'menu_mode';
