@@ -1134,15 +1134,27 @@ function checkWallCollisionCircle(object, bounceFactor) {
         }
     }
 
-    // 2. Left/Right Walls (Solid walls behind the goals)
+// 2. Left/Right Walls (Solid walls behind the goals)
     if (!isWithinGoalY && object.y > CORNER_RADIUS && object.y < CANVAS_HEIGHT - CORNER_RADIUS) { 
-        if (object.x < objRadius) {
+        if (object.x < objRadius) { // LEFT WALL (Blue Side)
             object.x = objRadius;
             object.vel.x *= -bounceFactor;
+
+            // 🔥 HEATSEEKER SWITCH: Only switch if it hit the wall it was aiming for
+            if (gameMode === 'heatseeker' && object === ball && heatseekerTargetCar === 'blue') {
+                heatseekerTargetCar = 'orange';
+                ballHasBeenHit = true;
+            }
         } 
-        else if (object.x > CANVAS_WIDTH - objRadius) {
+        else if (object.x > CANVAS_WIDTH - objRadius) { // RIGHT WALL (Orange Side)
             object.x = CANVAS_WIDTH - objRadius;
             object.vel.x *= -bounceFactor;
+
+            // 🔥 HEATSEEKER SWITCH: Only switch if it hit the wall it was aiming for
+            if (gameMode === 'heatseeker' && object === ball && heatseekerTargetCar === 'orange') {
+                heatseekerTargetCar = 'blue';
+                ballHasBeenHit = true;
+            }
         }
     }
 
@@ -1751,6 +1763,13 @@ function drawGame() {
         // Display FPS
         ctx.fillText(`FPS: ${fps}`, 10, debugY); 
         debugY += LINE_HEIGHT;
+      	
+      	// Display max ball speed
+      	if (gameMode === 'heatseeker') {
+          ctx.fillText(`Ball Max Speed: ${MAX_SEEKING_SPEED}`, 10, debugY); 
+        debugY += LINE_HEIGHT;
+        
+    }
         
         // Display Ball Speed
         ctx.fillText(`Ball Speed: ${ballSpeed}`, 10, debugY); 
