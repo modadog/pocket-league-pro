@@ -374,6 +374,12 @@ function setDifficulty(difficulty) {
 }
 
 function selectGameMode(mode) {
+    if (mode === 'no_ball') {
+    ball.x = -1000;
+    ball.y = -1000;
+    ball.vel.x = 0;
+    ball.vel.y = 0;
+}
     gameMode = mode;
 
     // Ball friction logic
@@ -664,8 +670,8 @@ function drawMenu() {
     } else if (gameState === 'menu_mode') { 
         let diffText = isTwoPlayerMode ? '2 Player Mode' : `1P Diff: ${selectedDifficulty.toUpperCase()}`;
         titleText = `Select Game Mode (${diffText})`;
-        buttonTexts = ['Normal', 'Ice (No Friction)', 'Heatseeker'];
-        buttonLabels = ['normal', 'ice', 'heatseeker'];
+        buttonTexts = ['Normal', 'Ice (No Friction)', 'Heatseeker', 'No Ball'];
+        buttonLabels = ['normal', 'ice', 'heatseeker', 'no_ball'];
     } else {
         buttonsDrawn = false; // Don't draw main menu buttons if in a settings state
     }
@@ -758,7 +764,7 @@ function handleMenuClick(e) {
     if (gameState === 'menu_difficulty' && !isTwoPlayerMode) {
         buttonLabels = ['freeplay', 'easy', 'medium', 'hard'];
     } else if (gameState === 'menu_mode') {
-        buttonLabels = ['normal', 'ice', 'heatseeker'];
+        buttonLabels = ['normal', 'ice', 'heatseeker', 'no_ball'];
     } else {
         buttonLabels = [];
     }
@@ -1398,8 +1404,10 @@ function update() {
 
 
     // Ball friction is controlled by Game Mode
+if (gameMode !== 'no_ball') {
     ball.vel.x *= currentBallFriction;
     ball.vel.y *= currentBallFriction;
+}
     
     if (gameMode === 'heatseeker' && ballHasBeenHit) {
         const targetGoalX = (heatseekerTargetCar === 'blue') ? 0 : CANVAS_WIDTH;
@@ -1434,11 +1442,13 @@ function update() {
 
     cars.forEach(car => checkWallCollisionRect(car, CAR_WALL_RESPONSE)); 
     // Ball wall bounce is controlled by Modded Settings
-    checkWallCollisionCircle(ball, gameSettings.WALL_BOUNCE); 
+    if (gameMode !== 'no_ball') {
+    checkWallCollisionCircle(ball, gameSettings.WALL_BOUNCE);
 
     cars.forEach(car => {
-        resolveCarBallCollision(car, ball); 
+        resolveCarBallCollision(car, ball);
     });
+}
     
     let goalScored = false;
     let scorer = 'none';
@@ -1700,13 +1710,15 @@ function drawGame() {
     }
 
     if (ballToDraw.x !== undefined) {
-        ctx.beginPath();
-        ctx.arc(ballToDraw.x, ballToDraw.y, ballToDraw.radius, 0, Math.PI * 2);
-        ctx.fillStyle = ballToDraw.color;
-        ctx.fill();
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        if (gameMode !== 'no_ball') {
+            ctx.beginPath();
+            ctx.arc(ballToDraw.x, ballToDraw.y, ballToDraw.radius, 0, Math.PI * 2);
+            ctx.fillStyle = ballToDraw.color;
+            ctx.fill();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+}
 
         if (debugMode) {
             ctx.beginPath();
