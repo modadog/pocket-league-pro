@@ -424,6 +424,51 @@ function selectGameMode(mode) {
     startBackgroundMusic();
     startTimer(); 
 }
+// tp fucntion
+// ===================== CAR GOAL TELEPORT SYSTEM =====================
+
+// 1. Put this with your other helper functions (like distance(), etc.)
+function checkCarGoalTeleport(car) {
+    const inGoalY = car.y > GOAL_START_Y && car.y < GOAL_START_Y + GOAL_WIDTH;
+
+    // LEFT GOAL (blue side)
+    if (car.x < 0 && inGoalY) {
+        teleportCar(car, 'left');
+    }
+
+    // RIGHT GOAL (orange side)
+    if (car.x > CANVAS_WIDTH && inGoalY) {
+        teleportCar(car, 'right');
+    }
+}
+
+
+// 2. Teleport logic (keeps speed + direction)
+function teleportCar(car, side) {
+    if (side === 'left') {
+        // send to right goal
+        car.x = CANVAS_WIDTH - 10;
+    } else {
+        // send to left goal
+        car.x = 10;
+    }
+
+    // keep velocity EXACTLY the same (same direction + speed)
+
+    // small push forward so it doesn’t instantly re-trigger
+    car.x += car.vel.x * 2;
+    car.y += car.vel.y * 2;
+}
+
+
+// 3. ADD THIS inside your update() function (IMPORTANT)
+// put it AFTER cars move but BEFORE goal detection
+
+cars.forEach(car => {
+    checkCarGoalTeleport(car);
+});
+
+// ===================== END TELEPORT SYSTEM =====================
 
 // --- MODDED / PHYSICS SLIDER MANAGEMENT FUNCTIONS (RENAMED & REFACTORED) ---
 
@@ -1345,6 +1390,12 @@ function drawBallPath(ctx, ballObj, durationFrames) {
 function update() {
     updateCar(playerCar, true);
     if (playWithAI || isTwoPlayerMode) updateCar(aiCar, false);
+      // 🔥 ADD THIS RIGHT HERE
+    cars.forEach(car => {
+        checkCarGoalTeleport(car);
+    });
+
+
 
     // Ball friction is controlled by Game Mode
     ball.vel.x *= currentBallFriction;
